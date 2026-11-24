@@ -1,0 +1,8 @@
+{
+  "place": "none",
+  "title": "Kent spaces",
+  "palette": [
+    { "title": "New space group", "command": "kent.new-group", "words": "spaces folders organize labels" },
+    { "title": "Group active space", "command": "kent.menu", "words": "spaces folders organize labels assign" }
+  ]
+}

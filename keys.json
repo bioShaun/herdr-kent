@@ -1,0 +1,8 @@
+{
+  "layout:kent": {
+    "alt-down": "kent.next",
+    "alt-up": "kent.prev",
+    "ctrl-shift-pagedown": "kent.next",
+    "ctrl-shift-pageup": "kent.prev"
+  }
+}
