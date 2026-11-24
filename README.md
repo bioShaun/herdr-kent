@@ -1,0 +1,103 @@
+# Kent for Herdr
+
+[中文说明](README.zh-CN.md)
+
+Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's practical main window, but turns the Spaces sidebar into named, foldable groups inside each machine.
+
+![Kent](preview.png)
+
+## What it does
+
+- Groups spaces under named labels such as `design`, `code`, or `experiments`.
+- Groups are scoped to each machine; remote and local spaces are never mixed.
+- Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
+- Space rows show program icons, the space name, git repository/branch details, and agent status.
+- Spaces can be assigned from the right-click menu or dragged onto a group header.
+- Spaces can be reordered inside a group, dragged between groups, or dragged out to become ungrouped.
+- Worktrees stay nested under their checkout, and Herdr's machine/git/space ordering behavior is preserved.
+- The compact narrow-sidebar rail still works when the sidebar is very small.
+
+## Install
+
+### From the Herdr Gallery
+
+After the Gallery finishes indexing this repository, open:
+
+<https://herdr.dev/layouts/bioShaun/herdr-kent>
+
+### Manual install
+
+Copy the layout and mod into your Herdr home. If you use a custom `HERDR_APP_HOME`, replace `~/.config/herdr-app` with that directory.
+
+```sh
+git clone git@github.com:bioShaun/herdr-kent.git
+cd herdr-kent
+
+cp layouts/kent.json ~/.config/herdr-app/layouts/
+mkdir -p ~/.config/herdr-app/mods/kent
+cp mods/kent/main.js mods/kent/mod.json ~/.config/herdr-app/mods/kent/
+
+herdr-app check ~/.config/herdr-app/mods/kent
+herdr-app do layout.switch '{"name":"kent"}'
+```
+
+Your existing `main` layout is not modified. Use `ctrl-shift-l` / `cmd-shift-l` to cycle layouts, or run:
+
+```sh
+herdr-app do layout.switch '{"name":"main"}'
+```
+
+## Optional keys
+
+`keys.json` contains optional bindings. Do not replace your whole Herdr `keys.json`; merge the `layout:kent` section into it manually:
+
+```json
+{
+  "layout:kent": {
+    "alt-down": "kent.next",
+    "alt-up": "kent.prev",
+    "ctrl-shift-pagedown": "kent.next",
+    "ctrl-shift-pageup": "kent.prev"
+  }
+}
+```
+
+These move through spaces in the order Kent draws them, skipping rows hidden inside folded groups.
+
+## Using groups
+
+- Right-click a space to open its menu.
+- Choose `New group with this space…` to create a group.
+- Choose `Move to …` to file the space under an existing group.
+- Choose `No group` to ungroup it.
+- Drag a space onto a group header to append it to that group.
+- Drag a space over another row to reorder it.
+- While dragging a grouped space, use `Drop here to ungroup` at the bottom of the list to remove it from its group.
+- Click a group header to fold or unfold it.
+- Right-click a group header to rename, reorder, fold/unfold, or delete it. Deleting a group never closes its spaces.
+
+On git checkouts, the space menu also includes Herdr's worktree actions: `New worktree`, `Open worktree`, and, for linked checkouts, `Remove worktree`.
+
+## Notes and limits
+
+- Grouping is manual. Kent does not infer groups from path, prefix, or tags.
+- Groups cannot span machines. Same-named groups on two machines are independent.
+- Group state is stored locally in Herdr shared state under `kent.groups.v1`; it is not synchronized to other Herdr clients.
+- Ordering inside groups belongs to Kent. Ungrouped spaces continue to use Herdr's own ordering.
+- Kent was built and tested against Herdr 0.1.18.
+
+## Development
+
+The mod is in `mods/kent/main.js`; the layout tree is `layouts/kent.json`.
+
+Validate the mod from the repository root:
+
+```sh
+herdr-app check mods/kent
+```
+
+`RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.
+
+## License
+
+Apache License 2.0. Kent includes a derivative of Herdr's shipped `spaces` mod; see `NOTICE`.
