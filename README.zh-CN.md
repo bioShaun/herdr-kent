@@ -11,7 +11,8 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 - 可以把 spaces 放入 `设计`、`代码`、`实验` 等命名分组。
 - 分组按机器隔离；本机和远程机器的 spaces 不会混在一起。
 - 分组标题可以折叠/展开，显示成员数量；折叠后仍会显示 blocked/done 状态。
-- space 行显示程序图标、名称、git 仓库/分支信息和 agent 状态。
+- space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；宽图标会保持原始宽高比，不再被拉成方形。
+- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip。
 - 可以通过右键菜单把 space 放入分组，也可以直接拖到分组标题上。
 - 可以在组内排序、在分组之间拖动，也可以拖出来变成未分组。
 - 保留 Herdr 原有的 worktree 嵌套、机器分组、git 信息和 space 排序行为。
@@ -34,10 +35,12 @@ git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
 
 cp layouts/kent.json ~/.config/herdr-app/layouts/
-mkdir -p ~/.config/herdr-app/mods/kent
+mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
 cp mods/kent/main.js mods/kent/mod.json ~/.config/herdr-app/mods/kent/
+cp mods/kent-agents/main.js mods/kent-agents/mod.json ~/.config/herdr-app/mods/kent-agents/
 
 herdr-app check ~/.config/herdr-app/mods/kent
+herdr-app check ~/.config/herdr-app/mods/kent-agents
 herdr-app do layout.switch '{"name":"kent"}'
 ```
 
@@ -78,6 +81,10 @@ herdr-app do layout.switch '{"name":"main"}'
 
 对于 git checkout，space 菜单还会显示 Herdr 的 worktree 操作：`New worktree`、`Open worktree`；linked worktree 还会显示 `Remove worktree`。
 
+## 主题行为
+
+Kent 不再写死亮色或暗色主题。它会跟随 `settings.json`、系统外观和 Herdr 的 theme picker。切换亮/暗 appearance 或主题时，Spaces 和 Agents 都会重绘，icon 边缘颜色也会随主题反转。
+
 ## 注意事项和限制
 
 - 分组是手动维护的；Kent 不会根据路径、名称前缀或 tag 自动分组。
@@ -85,19 +92,21 @@ herdr-app do layout.switch '{"name":"main"}'
 - 分组状态保存在本机 Herdr shared state 的 `kent.groups.v1` 里，不会同步到其他 Herdr 客户端。
 - 组内排序由 Kent 管理；未分组 spaces 仍使用 Herdr 自己的排序。
 - Kent 是基于 Herdr 0.1.18 开发和测试的。
+- 目前只对 Herdr 自带的非方形 SVG icon 内置了宽高比修正；特殊自定义 icon 会退回方形适配。
 
 ## 开发
 
-mod 源码在 `mods/kent/main.js`；layout 树在 `layouts/kent.json`。
+Spaces mod 源码在 `mods/kent/main.js`；Agents 变体在 `mods/kent-agents/main.js`；layout 树在 `layouts/kent.json`。
 
 在仓库根目录验证 mod：
 
 ```sh
 herdr-app check mods/kent
+herdr-app check mods/kent-agents
 ```
 
 `RECIPE.md` 是按照 Herdr Gallery 格式编写的详细实现说明。
 
 ## License
 
-Apache License 2.0。Kent 包含 Herdr 官方 `spaces` mod 的衍生代码，详见 `NOTICE`。
+Apache License 2.0。Kent 包含 Herdr 官方 `spaces` 和 `agents` mods 的衍生代码，详见 `NOTICE`。

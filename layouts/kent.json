@@ -61,7 +61,7 @@
               },
               "min": 90,
               "content": {
-                "mod": "agents"
+                "mod": "kent-agents"
               }
             }
           ]
@@ -179,15 +179,5 @@
         }
       ]
     }
-  ],
-  "theme": "graphite",
-  "colors": {
-    "accent": "#9a86f3",
-    "selected": "#302c4d",
-    "chrome": "#171821",
-    "canvas": "#12131a",
-    "background": "#101117",
-    "border": "#292a35",
-    "hover": "#22232e"
-  }
+  ]
 }

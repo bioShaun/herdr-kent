@@ -122,14 +122,87 @@ function programFor(w, ps) {
   return mine.find((p) => p.focused) ?? mine.find((p) => p.tab === active) ?? mine[0] ?? null;
 }
 
-function programIcon(p, t) {
-  if (!p?.icon) {
-    return h_flex().size(18).flex_none().rounded(5).bg(t.raised).items_center().justify_center()
-      .child(svg("mods/workspace-chrome/terminal.svg").size(12).text_color(t.muted));
+// Program icons sit in a small neutral chip, like Rex's sidebar: dark icons do
+// not disappear into a dark theme and light icons keep an edge in a light one.
+// gpui element backgrounds are solid colors, so the edge is a four-sided
+// pseudo-gradient: brighter at the top/left, quieter at the bottom/right.
+// Most program artwork is square, but a few shipped SVGs are wide; keep their
+// aspect instead of stretching them into the chip.
+const ICON_ASPECT = {
+  "crush.svg": 50.47 / 42.99,
+  "mastracode.svg": 33.069 / 20.691,
+  "pig.svg": 14 / 12,
+  "prime-agent.svg": 46 / 40,
+};
+
+function iconAspect(path) {
+  const base = (path ?? "").split("/").pop();
+  return ICON_ASPECT[base] ?? 1;
+}
+
+function darkSurface(color, fallback = true) {
+  const m = /^#([0-9a-f]{6})/i.exec(color ?? "");
+  if (!m) return fallback;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
+}
+
+function aspectFit(ratio, maxW, maxH) {
+  let w = maxW;
+  let h = w / ratio;
+  if (h > maxH) {
+    h = maxH;
+    w = h * ratio;
   }
-  if (!p.tint) return image(p.icon).size(18).flex_none();
-  return h_flex().size(18).flex_none().rounded(5).bg(p.tile ?? t.raised).items_center().justify_center()
-    .child(svg(p.icon).size(12).text_color(p.color ?? t.muted));
+  return [w, h];
+}
+
+function programIcon(p, t) {
+  const dark = darkSurface(t.chrome, t.is_dark !== false);
+  const edgeHot = dark ? "#ffffff26" : "#00000024";
+  const edgeMid = dark ? "#ffffff14" : "#00000014";
+  const edgeLow = dark ? "#ffffff06" : "#00000006";
+  const edgeBase = dark ? "#ffffff06" : "#00000005";
+  const ratio = iconAspect(p?.icon);
+  let chipW = 18;
+  let chipH = 18;
+  if (ratio > 1.04) chipH = Math.max(11, chipW / ratio);
+  else if (ratio < 0.96) chipW = Math.max(11, chipH * ratio);
+  const radius = Math.min(7, chipH / 2);
+  const fill = p?.tile ?? (!p?.icon ? t.raised : dark ? "#ffffff04" : "#00000004");
+  const padX = p?.tint || !p?.icon ? 5.5 : 2.5;
+  const padY = p?.tint || !p?.icon ? 5 : 2.5;
+  const [artW, artH] = aspectFit(ratio, Math.max(7, chipW - padX), Math.max(7, chipH - padY));
+  const art = !p?.icon
+    ? svg("mods/workspace-chrome/terminal.svg").w(artW).h(artH).text_color(t.muted)
+    : !p.tint
+      ? image(p.icon).w(artW).h(artH).flex_none()
+      : svg(p.icon).w(artW).h(artH).text_color(p.color ?? (dark ? t.foreground : t.muted));
+  return h_flex()
+    .size(20)
+    .flex_none()
+    .items_center()
+    .justify_center()
+    .child(h_flex()
+      .w(chipW)
+      .h(chipH)
+      .rounded(radius)
+      .relative()
+      .bg(edgeBase)
+      .child(div().absolute().top(0).left(1).right(1).h(1).bg(edgeHot))
+      .child(div().absolute().left(0).top(1).bottom(1).w(1).bg(edgeMid))
+      .child(div().absolute().bottom(0).left(1).right(1).h(1).bg(edgeLow))
+      .child(div().absolute().right(0).top(1).bottom(1).w(1).bg(edgeLow))
+      .child(h_flex()
+        .absolute()
+        .inset(1)
+        .rounded(Math.max(3, radius - 1))
+        .bg(fill)
+        .overflow_hidden()
+        .items_center()
+        .justify_center()
+        .child(art)));
 }
 
 export default class Spaces extends View {

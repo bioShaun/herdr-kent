@@ -11,7 +11,8 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 - Groups spaces under named labels such as `design`, `code`, or `experiments`.
 - Groups are scoped to each machine; remote and local spaces are never mixed.
 - Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
-- Space rows show program icons, the space name, git repository/branch details, and agent status.
+- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Wide shipped icons keep their aspect instead of being stretched into squares.
+- Agents use the same icon chips through the included `kent-agents` mod.
 - Spaces can be assigned from the right-click menu or dragged onto a group header.
 - Spaces can be reordered inside a group, dragged between groups, or dragged out to become ungrouped.
 - Worktrees stay nested under their checkout, and Herdr's machine/git/space ordering behavior is preserved.
@@ -34,10 +35,12 @@ git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
 
 cp layouts/kent.json ~/.config/herdr-app/layouts/
-mkdir -p ~/.config/herdr-app/mods/kent
+mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
 cp mods/kent/main.js mods/kent/mod.json ~/.config/herdr-app/mods/kent/
+cp mods/kent-agents/main.js mods/kent-agents/mod.json ~/.config/herdr-app/mods/kent-agents/
 
 herdr-app check ~/.config/herdr-app/mods/kent
+herdr-app check ~/.config/herdr-app/mods/kent-agents
 herdr-app do layout.switch '{"name":"kent"}'
 ```
 
@@ -78,6 +81,10 @@ These move through spaces in the order Kent draws them, skipping rows hidden ins
 
 On git checkouts, the space menu also includes Herdr's worktree actions: `New worktree`, `Open worktree`, and, for linked checkouts, `Remove worktree`.
 
+## Theme behavior
+
+Kent does not hardcode a light or dark theme. It follows `settings.json`, the system appearance, and Herdr's theme picker. Changing appearance or theme should redraw both Spaces and Agents; the icon edge colors invert with the active appearance.
+
 ## Notes and limits
 
 - Grouping is manual. Kent does not infer groups from path, prefix, or tags.
@@ -85,19 +92,21 @@ On git checkouts, the space menu also includes Herdr's worktree actions: `New wo
 - Group state is stored locally in Herdr shared state under `kent.groups.v1`; it is not synchronized to other Herdr clients.
 - Ordering inside groups belongs to Kent. Ungrouped spaces continue to use Herdr's own ordering.
 - Kent was built and tested against Herdr 0.1.18.
+- Aspect correction is built in for Herdr's shipped non-square SVG icons; unusual custom icons fall back to square fitting.
 
 ## Development
 
-The mod is in `mods/kent/main.js`; the layout tree is `layouts/kent.json`.
+The Spaces mod is in `mods/kent/main.js`; the Agents variant is in `mods/kent-agents/main.js`; the layout tree is `layouts/kent.json`.
 
 Validate the mod from the repository root:
 
 ```sh
 herdr-app check mods/kent
+herdr-app check mods/kent-agents
 ```
 
 `RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.
 
 ## License
 
-Apache License 2.0. Kent includes a derivative of Herdr's shipped `spaces` mod; see `NOTICE`.
+Apache License 2.0. Kent includes derivatives of Herdr's shipped `spaces` and `agents` mods; see `NOTICE`.
