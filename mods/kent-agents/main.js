@@ -150,9 +150,9 @@ export default class Agents extends View {
       .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents"))
       .children(SORTS.map((s) => h_flex()
         .id(`sort-${s.id}`)
-        .h(31)
+        .h(29)
         .px(8)
-        .gap(9)
+        .gap(8)
         .rounded(7)
         .items_center()
         .text_color(t.foreground)
@@ -161,7 +161,7 @@ export default class Agents extends View {
           setShared("agents.sort", s.id);
           closeOverlay(props().overlay);
         })
-        .child(svg(`mods/workspace-chrome/${s.icon}.svg`).size(14).flex_none().text_color(t.muted))
+        .child(svg(`mods/workspace-chrome/${s.icon}.svg`).size(13).flex_none().text_color(t.muted))
         .child(div().flex_1().child(s.label))
         .when(s.id === on, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
   }
@@ -316,7 +316,7 @@ export default class Agents extends View {
           .items_center()
           .gap(4)
           .when(a.focused, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
+          .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -348,14 +348,15 @@ export default class Agents extends View {
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
-        .h(30)
+        .h(28)
         .flex_none()
+        .relative()
         .rounded(8)
         .items_center()
         .gap(9)
-        .when(a.focused, (el) => el.bg(t.selected))
+        .when(a.focused, (el) => el.bg(t.selected).child(div().absolute().left(3).top(6).bottom(6).w(2).rounded(1).bg(t.accent)))
+        .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover))
         .on_hover((on, cx) => {
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
@@ -373,8 +374,9 @@ export default class Agents extends View {
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .when(this.hovered === a.address, el => el.child(pin))
-        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
+        .child(h_flex().w(28).flex_none().items_center().justify_end()
+          .when(this.hovered === a.address, el => el.child(pin))
+          .when(this.hovered !== a.address && Boolean(when), el => el.child(div().text_size(11).text_color(t.dim).child(duration(now - when)))))
         .child(this.status(t, a, byPriority && !isPinned));
     };
 
@@ -389,35 +391,36 @@ export default class Agents extends View {
     }
 
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.
-    const header = (g) => {
+    const header = (g, index) => {
       const open = !this.folded.has(g.id);
       const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
       return h_flex()
         .id(g.id)
         .px(8)
-        .pt(8)
-        .h(30)
+        .mt(index === 0 ? 2 : 5)
+        .mb(1)
+        .h(24)
         .flex_none()
         .gap(6)
         .items_center()
+        .rounded(6)
         .text_size(11)
-        .font_medium()
+        .font_semibold()
+        .text_color(t.dim)
         .cursor_pointer()
-        .hover((s) => s.text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
         })
-        .child(div().truncate().text_color(t[g.status] ?? t.dim).child(g.label))
-        .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
-        .child(div().flex_1())
-        .when(!open, (el) => el
-          .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
-          .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
+        .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(10).flex_none().text_color(t.dim))
+        .child(div().flex_1().min_w(0).truncate().text_color(t[g.status] ?? t.dim).child(g.label))
+        .when(byPriority || !open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(String(g.members.length))))
+        .when(!open && !byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)));
     };
     const rows = collapsed
       ? list.flatMap(withKids)
-      : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+      : groups.flatMap((g, index) => [header(g, index), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
 
     return v_flex()
       .size_full()
@@ -430,9 +433,7 @@ export default class Agents extends View {
         el.child(
           h_flex()
             .px(16)
-            .h(41)
-            .pt(14)
-            .pb(5)
+            .h(36)
             .flex_none()
             .items_center()
             .justify_between()
@@ -440,10 +441,16 @@ export default class Agents extends View {
             .child(
               div()
                 .id("ag-sort")
+                .size(24)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(6)
                 .text_size(11)
                 .text_color(t.dim)
-                .hover((s) => s.text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: "kent-agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
+                .hover((s) => s.bg(t.hover).text_color(t.foreground))
+                .on_click(() => openOverlay({ mod: "kent-agents", kind: "popup", width: 200, props: { sortMenu: true } }))
                 .tooltip(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
             ),

@@ -8,13 +8,13 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 
 ## What it does
 
-- Groups spaces under named labels such as `design`, `code`, or `experiments`.
+- Groups spaces under named labels such as `design`, `code`, or `experiments`; unassigned spaces stay in `default`; once named groups are in use, `default` has its own foldable heading.
 - Groups are scoped to each machine; remote and local spaces are never mixed.
 - Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
 - Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares.
 - Agents use the same icon chips through the included `kent-agents` mod.
-- Spaces can be assigned from the right-click menu or dragged onto a group header.
-- Spaces can be reordered inside a group, dragged between groups, or dragged out to become ungrouped.
+- Spaces can be created directly inside a group, assigned from the right-click menu, or dragged onto a group header.
+- Spaces can be reordered inside a group, dragged between groups, or moved back to `default`.
 - Worktrees stay nested under their checkout, and Herdr's machine/git/space ordering behavior is preserved.
 - The compact narrow-sidebar rail still works when the sidebar is very small.
 
@@ -36,8 +36,8 @@ cd herdr-kent
 
 cp layouts/kent.json ~/.config/herdr-app/layouts/
 mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
-cp mods/kent/main.js mods/kent/mod.json ~/.config/herdr-app/mods/kent/
-cp mods/kent-agents/main.js mods/kent-agents/mod.json ~/.config/herdr-app/mods/kent-agents/
+cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
+cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
 
 herdr-app check ~/.config/herdr-app/mods/kent
 herdr-app check ~/.config/herdr-app/mods/kent-agents
@@ -72,12 +72,12 @@ These move through spaces in the order Kent draws them, skipping rows hidden ins
 - Right-click a space to open its menu.
 - Choose `Group this space…` to create a group containing that space.
 - Choose `Move to …` to file the space under an existing group.
-- Choose `No group` to ungroup it.
+- Choose `Move to default` to move it back to the default group.
 - Drag a space onto a group header to append it to that group.
 - Drag a space over another row to reorder it.
-- While dragging a grouped space, use `Drop here to ungroup` at the bottom of the list to remove it from its group.
-- Click a group header to fold or unfold it.
-- Right-click a group header to rename, reorder, fold/unfold, or delete it. Deleting a group never closes its spaces.
+- While dragging a grouped space, use `Move to default` at the bottom of the list to remove it from its named group.
+- Click a group header to fold or unfold it; use its `+` button to create a new space inside that group.
+- Right-click a named group header to create a space in it, rename, reorder, fold/unfold, or delete it. Deleting a group never closes its spaces.
 
 On git checkouts, the space menu also includes Herdr's worktree actions: `New worktree`, `Open worktree`, and, for linked checkouts, `Remove worktree`.
 
@@ -90,7 +90,7 @@ Kent does not hardcode a light or dark theme. It follows `settings.json`, the sy
 - Grouping is manual. Kent does not infer groups from path, prefix, or tags.
 - Groups cannot span machines. Same-named groups on two machines are independent.
 - Group state is stored locally in Herdr shared state under `kent.groups.v1`; it is not synchronized to other Herdr clients.
-- Ordering inside groups belongs to Kent. Ungrouped spaces continue to use Herdr's own ordering.
+- Ordering inside named groups belongs to Kent. Spaces in `default` continue to use Herdr's own ordering.
 - Kent was built and tested against Herdr 0.1.18.
 - Visible-bound metrics are generated for the SVG icons shipped with Herdr 0.1.18. Icons added by a future Herdr version can be measured again with `scripts/generate-icon-metrics.py`; unknown custom icons fall back to square fitting.
 
@@ -110,6 +110,14 @@ After Herdr updates its shipped icon set, regenerate the icon metrics from the r
 ```sh
 uv run --with svgpathtools python scripts/generate-icon-metrics.py
 ```
+
+After changing the layout or mods, regenerate the preview from the repository root:
+
+```sh
+python3 scripts/generate-preview.py
+```
+
+The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png`, and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
 
 `RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.
 
