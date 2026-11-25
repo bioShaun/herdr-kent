@@ -28,7 +28,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 
 ## Built from
 
-- **Layout** `layouts/kent.json`: a copy of Herdr's `main` structure. The sidebar is 232px, the Spaces block uses mod `kent` with weight 2, the Agents block uses `kent-agents` with weight 1. The root deliberately leaves `theme` and `colors` unset so the layout follows the person's settings and theme picks.
+- **Layout** `layouts/kent.json`: a copy of Herdr's `main` structure. The sidebar is 232px, the Spaces block uses mod `kent` with weight 2, the Agents block uses `kent-agents` with weight 1. The root divider highlights in `accent` on hover so the drag-to-narrow edge is discoverable, and the Spaces/Agents boundary inside `sidebar-lists` carries a transparent divider that only shows its `accent` hover line. The root sets `"preview": "layouts/kent.png"` so the settings layout picker shows a real thumbnail. The root deliberately leaves `theme` and `colors` unset so the layout follows the person's settings and theme picks.
 - **Mod** `mods/kent/`: based on Herdr 0.1.18's shipped `spaces` mod. It keeps the git/worktree/machine logic and adds:
   - the shared group store (`groups`, ordered `in` membership arrays),
   - `machineRows` and `groupHead` rendering,
@@ -38,7 +38,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
   - popup menus, group rename/create dialogs, and palette commands through `nextCommand()`.
 - **Mod** `mods/kent-agents/`: a copy of Herdr 0.1.18's shipped `agents` mod, with the program-icon helper replaced by the same chip, its self-opened sort popup renamed to `kent-agents`, and row/header/menu rhythm aligned with the Spaces sidebar.
 - **Keys** `keys.json`: optional `layout:kent` bindings for `kent.next` and `kent.prev`.
-- **Art:** `preview.png` is regenerated with `python3 scripts/generate-preview.py`; the script captures a real frame from a temporary isolated Herdr home/core seeded with curated demo data, never the person's live window. The layout itself uses Herdr's shipped SVG icons and program icons.
+- **Art:** `preview.png` is regenerated with `python3 scripts/generate-preview.py`; the script captures a real frame from a temporary isolated Herdr home/core seeded with curated demo data, never the person's live window, and copies the result to `layouts/kent.png` for the settings-picker thumbnail. The layout itself uses Herdr's shipped SVG icons and program icons.
 
 ## Watch out
 

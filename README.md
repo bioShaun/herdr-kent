@@ -34,7 +34,7 @@ Copy the layout and mod into your Herdr home. If you use a custom `HERDR_APP_HOM
 git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
 
-cp layouts/kent.json ~/.config/herdr-app/layouts/
+cp layouts/kent.json layouts/kent.png ~/.config/herdr-app/layouts/
 mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
 cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
 cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
@@ -123,7 +123,7 @@ After changing the layout or mods, regenerate the preview from the repository ro
 python3 scripts/generate-preview.py
 ```
 
-The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png`, and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
+The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png` (and its settings-picker copy `layouts/kent.png`, referenced by the layout's `preview` field), and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
 
 `RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.
 

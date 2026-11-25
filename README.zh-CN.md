@@ -34,7 +34,7 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
 
-cp layouts/kent.json ~/.config/herdr-app/layouts/
+cp layouts/kent.json layouts/kent.png ~/.config/herdr-app/layouts/
 mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
 cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
 cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
@@ -123,7 +123,7 @@ uv run --with svgpathtools python scripts/generate-icon-metrics.py
 python3 scripts/generate-preview.py
 ```
 
-脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`，结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。
+脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`（同时写入设置页缩略图副本 `layouts/kent.png`，由 layout 的 `preview` 字段引用），结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。
 
 `RECIPE.md` 是按照 Herdr Gallery 格式编写的详细实现说明。
 

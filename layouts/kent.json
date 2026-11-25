@@ -2,6 +2,7 @@
   "id": "root",
   "type": "row",
   "titlebar": "none",
+  "preview": "layouts/kent.png",
   "traffic_lights": [
     12,
     16
@@ -13,7 +14,8 @@
   ],
   "divider": {
     "width": 1,
-    "color": "border"
+    "color": "border",
+    "hover": "accent"
   },
   "children": [
     {
@@ -41,6 +43,11 @@
         {
           "id": "sidebar-lists",
           "type": "column",
+          "divider": {
+            "width": 1,
+            "color": "#00000000",
+            "hover": "accent"
+          },
           "children": [
             {
               "id": "spaces",
