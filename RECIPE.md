@@ -1,6 +1,6 @@
 # Kent
 
-A compact, theme-aware Herdr layout for people who keep many spaces open. Its Spaces sidebar works like a set of labeled shelves: spaces can be filed under named groups such as “探针设计” and “代码”, while the rest of the window stays close to Herdr's practical main layout.
+A compact, theme-aware Herdr layout for people who keep many spaces open. Its Spaces sidebar works like a set of labeled shelves: spaces can be filed under named groups such as “design”, “code” and “experiments”, while the rest of the window stays close to Herdr's practical main layout.
 
 ![Kent](preview.png)
 
@@ -19,7 +19,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 
 - Click a space to show it. Dragging a space over another row shows the violet insertion line; dropping reorders inside a group or uses Herdr's normal `space.move` behavior for loose spaces.
 - Drop a space on a group header to append it to that group. While dragging a grouped space, a “Move to default” target appears at the bottom of the list.
-- Right-click a space for a keyboard-navigable menu: Open, Rename, Move to default, one “Move to …” item for each named group on that machine, “Group this space…”, and Close. On git checkouts the same menu also includes Herdr's New/Open/Remove worktree actions.
+- Right-click a space for a keyboard-navigable menu: Open, Rename — on git checkouts followed by Herdr's New worktree/Open worktree actions, plus Remove worktree on linked checkouts — then Move to default, one “Move to …” item for each named group on that machine, “Group this space…”, and Close space.
 - Right-click a named group to create a space in it, fold/unfold, rename, move it up or down, or delete it. Deleting a group never closes spaces; they simply return to `default`.
 - Click a group header to fold or unfold it. Its quiet `+` control creates a space directly inside that group; creating into a folded group unfolds it so the new row is visible. The command palette can also open “New space group” and “Group active space”.
 - Groups are per machine. Their names, folded state, membership, in-group order and per-machine `default` fold state persist in shared state as `kent.groups.v1` and redraw immediately.

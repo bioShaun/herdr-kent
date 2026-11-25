@@ -73,6 +73,47 @@ export function tone(t, status) {
 const STORE = "kent.groups.v1";
 const DEFAULT_GROUP = "__default__";
 const groupId = () => `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const pendingGroupSpaces = [];
+let wakeGroupSpaces = null;
+// The mod's load time stands in for the app's start: a machine that answers
+// with no spaces at all within this grace window may simply still be loading,
+// so its group membership is not pruned yet.
+const startedAt = Date.now();
+const STARTUP_GRACE = 10000;
+const PRUNE_EVERY = 60000;
+
+// Closed spaces leave their ids behind in group membership. Prune them, but
+// only for a machine that is definitely answering: one that is away, asleep or
+// still loading keeps every id, because its spaces simply aren't here to ask.
+// Returns true when at least one dead id was removed.
+function pruneStore(data, sp, ms, busyMachines) {
+  if (checking()) return false;
+  let removed = false;
+  const machineNames = new Set(data.groups.map((g) => g.machine ?? null));
+  for (const machine of machineNames) {
+    const entry = ms.find((m) => (m.name ?? null) === machine);
+    if (!entry || entry.layout !== "ready") continue;
+    if (busyMachines.has(machine)) continue;
+    const live = new Set(sp.filter((s) => (s.machine ?? null) === machine).map((s) => s.id));
+    if (!live.size && Date.now() - startedAt < STARTUP_GRACE) continue;
+    for (const g of data.groups) {
+      if ((g.machine ?? null) !== machine) continue;
+      const list = data.in[g.id];
+      if (!Array.isArray(list)) continue;
+      const kept = list.filter((id) => live.has(id));
+      if (kept.length !== list.length) {
+        data.in[g.id] = kept;
+        removed = true;
+      }
+    }
+  }
+  return removed;
+}
+
+function queueNewSpaceInGroup(id, machine = null) {
+  pendingGroupSpaces.push({ id, machine, at: Date.now() });
+  wakeGroupSpaces?.();
+}
 
 function defaultGroupFor(machine, data) {
   return {
@@ -132,11 +173,28 @@ function removeFromGroups(data, id) {
   }
 }
 
-function programFor(w, ps) {
-  const tabs = new Set((w.tabs ?? []).map((tab) => tab.id));
-  const mine = ps.filter((p) => p.terminal && tabs.has(p.tab));
-  const active = (w.tabs ?? []).find((tab) => tab.active)?.id;
-  return mine.find((p) => p.focused) ?? mine.find((p) => p.tab === active) ?? mine[0] ?? null;
+function panesByTab(ps) {
+  const byTab = new Map();
+  for (const p of ps) {
+    let list = byTab.get(p.tab);
+    if (!list) byTab.set(p.tab, list = []);
+    list.push(p);
+  }
+  return byTab;
+}
+
+function programFor(w, tabPanes) {
+  let activePane = null;
+  let first = null;
+  for (const tab of w.tabs ?? []) {
+    for (const p of tabPanes.get(tab.id) ?? []) {
+      if (!p.terminal) continue;
+      if (p.focused) return p;
+      if (!activePane && tab.active) activePane = p;
+      if (!first) first = p;
+    }
+  }
+  return activePane ?? first;
 }
 
 function programIcon(p, t) {
@@ -152,6 +210,9 @@ export default class Spaces extends View {
       this.input.set_selected_range({ start: 0, end: this.input.value().length });
       this.input.on("change", (_e, cx) => cx.notify());
       this.input.on("submit", () => this.submitPrompt());
+      this.inputFocused = true;
+      this.input.on("focus", (_e, cx) => { this.inputFocused = true; cx.notify(); });
+      this.input.on("blur", (_e, cx) => { this.inputFocused = false; cx.notify(); });
       this.input.focus();
       cx.timer.after(300, () => this.input.focus());
       this.handle = cx.focus_handle();
@@ -181,6 +242,7 @@ export default class Spaces extends View {
     this.over = null;
     this.overGroup = null;
     this.overGroupMachine = null;
+    this.overUngroup = false;
     this.positionOf = {};
     this.seen = [];
     this.scroll = ScrollHandle.new(); // the list's position: the active space is brought into view through it
@@ -208,6 +270,18 @@ export default class Spaces extends View {
           cx.notify();
         }
       });
+      cx.spawn(async (cx) => {
+        for (;;) {
+          while (pendingGroupSpaces.length) {
+            const req = pendingGroupSpaces.shift();
+            if (Date.now() - req.at > 5000) continue;
+            const group = readStore().groups.find((g) => g.id === req.id);
+            if (group) this.newSpaceInGroup(group, req.machine ?? group.machine ?? null, cx);
+          }
+          await new Promise((resolve) => { wakeGroupSpaces = resolve; });
+          wakeGroupSpaces = null;
+        }
+      });
     }
   }
 
@@ -227,6 +301,13 @@ export default class Spaces extends View {
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     const due = this.due(now, sp, panes());
     if (due.size) this.refreshGit(due, cx);
+    // Dead ids are pruned here at most once a minute, and inline with every
+    // membership write; writeStore only happens when something was removed.
+    if (now - (this.prunedAt ?? 0) > PRUNE_EVERY) {
+      this.prunedAt = now;
+      const data = readStore();
+      if (this.pruneStoreData(data)) writeStore(data);
+    }
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
   }
 
@@ -413,13 +494,28 @@ export default class Spaces extends View {
     });
   }
 
-  groupsFor(machine) {
-    return readStore().groups.filter((g) => (g.machine ?? null) === (machine ?? null));
+  clearDrag() {
+    this.pressed = null;
+    this.over = null;
+    this.overGroup = null;
+    this.overGroupMachine = null;
+    this.overUngroup = false;
   }
 
-  groupOf(spaceId, machine) {
-    const data = readStore();
-    for (const g of data.groups.filter((group) => (group.machine ?? null) === (machine ?? null))) {
+  groupsFor(machine, data = readStore()) {
+    return data.groups.filter((g) => (g.machine ?? null) === (machine ?? null));
+  }
+
+  // Prune dead space ids from a freshly read store. Machines with a space
+  // creation still in flight are skipped: their membership is about to change.
+  pruneStoreData(data) {
+    const busy = new Set((this.newSpaceRequests ?? []).map((r) => r.machine ?? null));
+    return pruneStore(data, spaces(), machines(), busy);
+  }
+
+  groupOf(spaceId, machine, data = readStore()) {
+    for (const g of data.groups) {
+      if ((g.machine ?? null) !== (machine ?? null)) continue;
       if ((data.in[g.id] ?? []).includes(spaceId)) return g.id;
     }
     return null;
@@ -434,6 +530,7 @@ export default class Spaces extends View {
       removeFromGroups(data, spaceId);
       data.in[id].push(spaceId);
     }
+    this.pruneStoreData(data);
     writeStore(data);
   }
 
@@ -451,6 +548,7 @@ export default class Spaces extends View {
     if (at === -1) return;
     data.groups.splice(at, 1);
     delete data.in[id];
+    this.pruneStoreData(data);
     writeStore(data);
   }
 
@@ -458,7 +556,8 @@ export default class Spaces extends View {
     const data = readStore();
     if (id === DEFAULT_GROUP) {
       const key = machine ?? "";
-      data.defaultFolded[key] = !data.defaultFolded[key];
+      if (data.defaultFolded[key]) delete data.defaultFolded[key];
+      else data.defaultFolded[key] = true;
       writeStore(data);
       return;
     }
@@ -491,6 +590,7 @@ export default class Spaces extends View {
       if (at === -1) list.push(spaceId);
       else list.splice(at + (after ? 1 : 0), 0, spaceId);
     }
+    this.pruneStoreData(data);
     writeStore(data);
   }
 
@@ -568,16 +668,31 @@ export default class Spaces extends View {
       mod: "kent",
       kind: "dialog",
       width: 360,
-      height: 176,
+      height: 200,
       props: { role: "prompt", machine: machine ?? null, group: id, value: group?.name ?? "", spaceId },
     });
+  }
+
+  close() {
+    this.input?.release();
+  }
+
+  // Why the prompt can't be submitted right now: nothing but whitespace, or a
+  // same-named group on this machine (the group being renamed doesn't count).
+  promptProblem() {
+    const p = this.prompt ?? {};
+    const name = (this.input?.value() ?? "").trim();
+    if (!name) return null;
+    const machine = p.machine ?? null;
+    const clash = readStore().groups.find((g) => (g.machine ?? null) === machine && g.id !== p.group && g.name === name);
+    return clash ? `A group named “${name}” already exists` : null;
   }
 
   submitPrompt() {
     const p = this.prompt ?? {};
     const name = this.input.value().trim();
+    if (!name || this.promptProblem()) return;
     closeOverlay(p.overlay);
-    if (!name) return;
     if (p.group) this.renameGroup(p.group, name);
     else this.createGroup(name, p.machine ?? null, p.spaceId ?? null);
   }
@@ -601,62 +716,113 @@ export default class Spaces extends View {
     });
   }
 
-  orderingDue(now) {
+  orderingDue(now, ms = machines()) {
     return this.ordering && now - this.ordering.at >= 1000
-      && this.ordering.machines.every(name => machines().some(m => m.name === name && m.layout === "ready"));
+      && this.ordering.machines.every(name => ms.some(m => m.name === name && m.layout === "ready"));
   }
 
-  // Spaces in order, each worktree space moved under its main checkout's.
-  ordered() {
-    const sp = spaces(), ps = panes();
-    const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
-    for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
-    const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
-    const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
-    const nested = (r) => r.g?.linked && mains.has(r.g.repo);
-    const out = [];
-    const placed = new Set(); // repos whose worktrees are listed (under the first of its spaces)
+  // Spaces in order. Herdr's rule — a linked worktree sits under its main
+  // checkout — only applies inside the default group: a worktree filed into a
+  // named group is left where the person put it, and the group itself decides
+  // whether it nests (see groupTrees). Only loose rows ever trigger space.move.
+  ordered(sp = spaces(), ps = panes(), ms = machines(), store = readStore()) {
+    const now = Date.now();
+    const list = sp.map((w, i) => {
+      const k = where(w, ps);
+      if (!this.shown.has(w.id) && (k in this.git || now - (this.born[w.id] ??= now) > 1500)) this.shown.add(w.id);
+      return { w, i, g: this.git[k] ?? null };
+    });
+    const rowById = new Map(list.map((r) => [r.w.id, r]));
+    // A space claimed by a named group of its own machine is out of the
+    // default group's hands: no forced move, no tree lines from here.
+    const claimed = new Set();
+    for (const g of store.groups) {
+      for (const id of store.in[g.id] ?? []) {
+        const row = rowById.get(id);
+        if (row && (row.w.machine ?? null) === (g.machine ?? null)) claimed.add(id);
+      }
+    }
+    const looseMains = new Set(list.filter((r) => !claimed.has(r.w.id) && r.g && !r.g.linked).map((r) => r.g.repo));
+    const nested = (r) => !claimed.has(r.w.id) && r.g?.linked && looseMains.has(r.g.repo);
+    const kidsByMain = new Map();
     for (const r of list) {
-      if (nested(r)) continue;
-      out.push({ ...r, tree: null });
-      if (!r.g || r.g.linked || placed.has(r.g.repo)) continue;
-      placed.add(r.g.repo);
-      const kids = list.filter((k) => nested(k) && k.g.repo === r.g.repo);
-      kids.forEach((k, n) => out.push({ ...k, tree: n === kids.length - 1 ? "└─" : "├─" }));
+      if (!nested(r)) continue;
+      const kids = kidsByMain.get(r.g.repo) ?? [];
+      kids.push(r);
+      kidsByMain.set(r.g.repo, kids);
+    }
+    // The arrangement is a permutation of the current order: loose worktrees
+    // move under their main checkout, every other space keeps its place, so a
+    // grouped space is never pulled around by someone else's nesting.
+    const order = sp.map(w => w.id);
+    const target = [];
+    const treeOf = new Map();
+    const placed = new Set(); // repos whose worktrees are listed (under the first of its spaces)
+    for (const id of order) {
+      const row = rowById.get(id);
+      if (!row || nested(row)) continue;
+      target.push(id);
+      if (!row.g || row.g.linked || claimed.has(id) || placed.has(row.g.repo)) continue;
+      placed.add(row.g.repo);
+      const kids = kidsByMain.get(row.g.repo) ?? [];
+      kids.forEach((k, n) => {
+        target.push(k.w.id);
+        treeOf.set(k.w.id, n === kids.length - 1 ? "└─" : "├─");
+      });
     }
     // Simulate the batch so later indexes include earlier moves. An attempted
     // write can lose a sync conflict: allow the echo to settle before retrying.
-    const order = sp.map(w => w.id);
-    const target = out.map(r => r.w.id);
-    const key = JSON.stringify([order, target, machines()]);
+    const key = JSON.stringify([order, target, ms]);
     if (order.every((id, i) => id === target[i])) {
       this.ordering = null;
-    } else if (this.ordering?.key !== key || this.orderingDue(Date.now())) {
+    } else if (this.ordering?.key !== key || this.orderingDue(now, ms)) {
       const moved = new Set();
-      this.ordering = { key, at: Date.now(), machines: [] };
-      for (let i = 0; i < out.length; i++) {
-        const from = order.indexOf(out[i].w.id);
+      this.ordering = { key, at: now, machines: [] };
+      for (let i = 0; i < target.length; i++) {
+        const from = order.indexOf(target[i]);
         if (from === i) continue;
-        run("space.move", { id: out[i].w.id, index: i + 1 });
-        moved.add(out[i].w.machine ?? null);
+        run("space.move", { id: target[i], index: i + 1 });
+        moved.add(rowById.get(target[i]).w.machine ?? null);
         order.splice(i, 0, order.splice(from, 1)[0]);
       }
       this.ordering.machines = [...moved];
     }
-    return out.filter(r => this.shown.has(r.w.id));
+    return target.map((id) => ({ ...rowById.get(id), tree: treeOf.get(id) ?? null })).filter((r) => this.shown.has(r.w.id));
   }
 
-  machineRows(machine, mine, draw, t, collapsed) {
+  // Tree lines inside a named group: a linked worktree nests only while it
+  // sits in an unbroken run right under its main checkout in the same group.
+  // Anything else in the group is an ordinary row, however it sorts elsewhere.
+  groupTrees(members) {
+    const trees = new Array(members.length).fill(null);
+    let i = 0;
+    while (i < members.length) {
+      const r = members[i];
+      if (r.g && !r.g.linked) {
+        const kids = [];
+        let j = i + 1;
+        while (j < members.length && members[j].g?.linked && members[j].g.repo === r.g.repo) {
+          kids.push(j);
+          j += 1;
+        }
+        kids.forEach((at, n) => { trees[at] = n === kids.length - 1 ? "└─" : "├─"; });
+        i = j;
+      } else i += 1;
+    }
+    return members.map((r, n) => ({ ...r, tree: trees[n] }));
+  }
+
+  machineRows(machine, mine, draw, t, collapsed, data) {
     const positions = new Map();
     const visible = [];
     if (collapsed) {
       mine.forEach((r, i) => {
         positions.set(r.w.id, i);
+        this.positionOf[r.w.id] = i;
         visible.push(r.w.id);
       });
       return { items: mine.map((r) => draw({ ...r, group: null })), positions, visible };
     }
-    const data = readStore();
     const rowById = new Map(mine.map((r) => [r.w.id, r]));
     const groups = data.groups.filter((g) => (g.machine ?? null) === (machine ?? null));
     const claimed = new Map();
@@ -665,32 +831,42 @@ export default class Spaces extends View {
         if (rowById.has(id) && !claimed.has(id)) claimed.set(id, g.id);
       }
     }
-    const items = [];
+    const entries = [];
     let at = 0;
-    const push = (el) => { items.push(el); at += 1; };
     for (const g of groups) {
       const ids = (data.in[g.id] ?? []).filter((id) => rowById.has(id) && claimed.get(id) === g.id);
-      const members = ids.map((id) => rowById.get(id));
-      push(this.groupHead(g, members, machine, t));
+      const members = this.groupTrees(ids.map((id) => rowById.get(id)));
+      entries.push({ kind: "head", g, members });
+      at += 1;
       if (g.folded) continue;
       for (const r of members) {
         positions.set(r.w.id, at);
+        this.positionOf[r.w.id] = at;
         visible.push(r.w.id);
-        push(draw({ ...r, group: g.id }));
+        entries.push({ kind: "row", r, group: g.id });
+        at += 1;
       }
     }
     const loose = mine.filter((row) => !claimed.has(row.w.id));
     if (loose.length) {
       const fallback = defaultGroupFor(machine, data);
-      if (groups.length > 0 || fallback.folded) push(this.groupHead(fallback, loose, machine, t));
+      if (groups.length > 0 || fallback.folded) {
+        entries.push({ kind: "head", g: fallback, members: loose });
+        at += 1;
+      }
       if (!fallback.folded) {
         for (const r of loose) {
           positions.set(r.w.id, at);
+          this.positionOf[r.w.id] = at;
           visible.push(r.w.id);
-          push(draw({ ...r, group: null }));
+          entries.push({ kind: "row", r, group: null });
+          at += 1;
         }
       }
     }
+    const items = entries.map((entry) =>
+      entry.kind === "head" ? this.groupHead(entry.g, entry.members, machine, t) : draw({ ...entry.r, group: entry.group }),
+    );
     return { items, positions, visible };
   }
 
@@ -721,25 +897,30 @@ export default class Spaces extends View {
         this.toggleGroup(g.id, machine);
       })
       .on_mouse_down("right", () => { if (!g.virtual) this.groupMenu(g, machine); })
-      .on_mouse_move((_e, cx) => {
+      .on_mouse_move((e, cx) => {
+        if (this.pressed === null) return;
+        if (e.pressed_button !== "left") {
+          this.clearDrag();
+          cx.notify();
+          return;
+        }
         const source = spaces().find((s) => s.id === this.pressed);
         if (!source || (source.machine ?? null) !== (machine ?? null)) return;
-        if (this.pressed !== null && (this.over !== null || this.overGroup !== g.id || (this.overGroupMachine ?? null) !== (machine ?? null))) {
+        if (this.over !== null || this.overGroup !== g.id || (this.overGroupMachine ?? null) !== (machine ?? null) || this.overUngroup) {
           this.over = null;
           this.overGroup = g.id;
           this.overGroupMachine = machine ?? null;
+          this.overUngroup = false;
           cx.notify();
         }
       })
       .on_mouse_up("left", (_e, cx) => {
-        const source = spaces().find((s) => s.id === this.pressed);
-        if (this.pressed !== null && source && (source.machine ?? null) === (machine ?? null)) {
-          const from = this.pressed;
-          this.pressed = null;
-          this.over = null;
-          this.overGroup = null;
-          this.overGroupMachine = null;
-          this.groupDropAt = Date.now();
+        if (this.pressed === null) return;
+        const from = this.pressed;
+        const source = spaces().find((s) => s.id === from);
+        this.clearDrag();
+        this.groupDropAt = Date.now();
+        if (source && (source.machine ?? null) === (machine ?? null)) {
           this.assignToGroup(from, g.virtual ? null : g.id);
         }
         cx.notify();
@@ -758,10 +939,10 @@ export default class Spaces extends View {
       .child(svg(`mods/workspace-chrome/chevron-${g.folded ? "right" : "down"}.svg`).size(10).flex_none().text_color(t.dim));
   }
 
-  ungroupDrop(t) {
-    const source = spaces().find((s) => s.id === this.pressed);
-    if (!source || !this.groupOf(source.id, source.machine ?? null)) return null;
-    const highlighted = this.pressed !== null && this.overGroup === null && this.over === null;
+  ungroupDrop(t, sp, store) {
+    const source = sp.find((s) => s.id === this.pressed);
+    if (!source || !this.groupOf(source.id, source.machine ?? null, store)) return null;
+    const highlighted = this.pressed !== null && this.overUngroup;
     return h_flex()
       .id("kent-ungroup")
       .h(30)
@@ -776,22 +957,26 @@ export default class Spaces extends View {
       .when(highlighted, (el) => el.bg(t.selected))
       .text_size(11.5)
       .text_color(t.dim)
-      .on_mouse_move((_e, cx) => {
-        if (this.pressed !== null && (this.over !== null || this.overGroup !== null)) {
+      .on_mouse_move((e, cx) => {
+        if (this.pressed === null) return;
+        if (e.pressed_button !== "left") {
+          this.clearDrag();
+          cx.notify();
+          return;
+        }
+        if (this.over !== null || this.overGroup !== null || this.overGroupMachine !== null || !this.overUngroup) {
           this.over = null;
           this.overGroup = null;
+          this.overGroupMachine = null;
+          this.overUngroup = true;
           cx.notify();
         }
       })
       .on_mouse_up("left", (_e, cx) => {
-        if (this.pressed !== null) {
-          const from = this.pressed;
-          this.pressed = null;
-          this.over = null;
-          this.overGroup = null;
-          this.overGroupMachine = null;
-          this.assignToGroup(from, null);
-        }
+        if (this.pressed === null) return;
+        const from = this.pressed;
+        this.clearDrag();
+        this.assignToGroup(from, null);
         cx.notify();
       })
       .child(svg("mods/workspace-chrome/folder.svg").size(12).flex_none())
@@ -799,9 +984,9 @@ export default class Spaces extends View {
   }
 
   // The rows, under a header per machine once one isn't this computer.
-  grouped(t, collapsed) {
-    const rows = this.ordered();
-    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
+  grouped(t, collapsed, sp, ps, ms, store, tabPanes) {
+    const rows = this.ordered(sp, ps, ms, store);
+    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t, sp, tabPanes));
     this.seen = [];
     this.positionOf = {};
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
@@ -810,16 +995,15 @@ export default class Spaces extends View {
     let before = 0;
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
     const loading = m => {
-      const layout = machines().find(k => k.name === m)?.layout;
+      const layout = ms.find(k => k.name === m)?.layout;
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
-        || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
+        || sp.some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     if (!remote.length) {
       if (loading(null) && !rows.length) return [loadingRow(null)];
-      const packed = this.machineRows(null, rows, draw, t, collapsed);
+      const packed = this.machineRows(null, rows, draw, t, collapsed, store);
       this.seen.push(...packed.visible);
-      this.positionOf = Object.fromEntries(packed.positions);
       const active = rows.find((r) => r.w.active)?.w.id;
       this.activeAt = active ? packed.positions.get(active) ?? -1 : -1;
       return packed.items;
@@ -885,12 +1069,11 @@ export default class Spaces extends View {
             .text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover(s => s.bg(t.hover))
             .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(login); this.copiedLogin = login; cx.notify(); })
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
-      const packed = this.machineRows(m, mine, draw, t, collapsed);
-      const content = packed.items.length ? packed.items : [loading(m) ? loadingRow(m) : cell(empty)];
-      const items = [cell(head), ...guidance, ...(folded ? [] : content)];
-      if (!folded && packed) {
+      const packed = folded ? null : this.machineRows(m, mine, draw, t, collapsed, store);
+      const content = !packed ? [] : packed.items.length ? packed.items : [loading(m) ? loadingRow(m) : cell(empty)];
+      const items = [cell(head), ...guidance, ...content];
+      if (packed) {
         this.seen.push(...packed.visible);
-        for (const [id, position] of packed.positions) this.positionOf[id] = position;
         const active = mine.find((r) => r.w.active)?.w.id;
         const position = active ? packed.positions.get(active) : undefined;
         if (position !== undefined) this.activeAt = before + 1 + guidance.length + position;
@@ -903,22 +1086,30 @@ export default class Spaces extends View {
   menuItems() {
     const p = this.menuProps ?? {};
     if (p.kind === "group") {
-      const group = readStore().groups.find((g) => g.id === p.id);
+      const data = readStore();
+      const group = data.groups.find((g) => g.id === p.id);
       if (!group) return [];
+      // Moving is only offered where it can go: not past the first or last
+      // group of the machine, and not at all when it is the only one.
+      const own = this.groupsFor(group.machine ?? null, data);
+      const at = own.findIndex((g) => g.id === p.id);
+      const moves = [
+        ...(at > 0 ? [{ label: "Move up", action: "group-up" }] : []),
+        ...(at !== -1 && at < own.length - 1 ? [{ label: "Move down", action: "group-down" }] : []),
+      ];
       return [
         { label: "New space in group", icon: "plus", action: "new-space" },
         { label: group.folded ? "Unfold group" : "Fold group", icon: "folder", action: "fold" },
         { label: "Rename group…", icon: "square-pen", action: "rename-group" },
-        { separator: true },
-        { label: "Move up", action: "group-up" },
-        { label: "Move down", action: "group-down" },
+        ...(moves.length ? [{ separator: true }, ...moves] : []),
         { separator: true },
         { label: "Delete group", icon: "x", action: "delete-group", danger: true },
       ];
     }
     const machine = p.machine ?? null;
-    const groups = this.groupsFor(machine);
-    const current = this.groupOf(p.id, machine);
+    const data = readStore();
+    const groups = this.groupsFor(machine, data);
+    const current = this.groupOf(p.id, machine, data);
     const git = p.git ?? null;
     return [
       { label: "Open", icon: "terminal", action: "open" },
@@ -941,13 +1132,16 @@ export default class Spaces extends View {
     const items = this.menuItems();
     if (!items.length) return;
     let at = this.at;
-    do {
+    for (let step = 0; step < items.length; step += 1) {
       at = (at + dir + items.length) % items.length;
-    } while (items[at]?.separator);
-    this.at = at;
+      if (!items[at]?.separator) {
+        this.at = at;
+        return;
+      }
+    }
   }
 
-  chooseMenu(i, cx = null) {
+  chooseMenu(i) {
     const it = this.menuItems()[i];
     const p = this.menuProps ?? {};
     if (!it || it.separator) return;
@@ -959,11 +1153,7 @@ export default class Spaces extends View {
       case "new-group": this.openGroupPrompt(p.machine ?? null, null, p.id); break;
       case "worktree": openOverlay({ mod: "worktree", kind: "dialog", ...(it.worktree === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: { space: p.id, action: it.worktree } }); break;
       case "close": run("space.close", { id: p.id }); break;
-      case "new-space": {
-        const group = readStore().groups.find((g) => g.id === p.id);
-        if (group) this.newSpaceInGroup(group, p.machine ?? group.machine ?? null, cx);
-        break;
-      }
+      case "new-space": queueNewSpaceInGroup(p.id, p.machine ?? null); break;
       case "fold": this.toggleGroup(p.id); break;
       case "rename-group": this.openGroupPrompt(p.machine ?? null, p.id); break;
       case "delete-group": this.deleteGroup(p.id); break;
@@ -976,7 +1166,7 @@ export default class Spaces extends View {
     const t = theme();
     const items = this.menuItems();
     if (!items.length) return v_flex().size_full().p(12).bg(t.popover).child(div().text_color(t.dim).child("This group is gone."));
-    if (items[this.at]?.separator) this.at = Math.max(0, items.findIndex((it) => !it.separator));
+    if (!items[this.at] || items[this.at].separator) this.at = Math.max(0, items.findIndex((it) => !it.separator));
     const leading = (it) => div().w(16).flex_none().flex().items_center().justify_center()
       .child(it.checked
         ? svg("mods/workspace-chrome/check.svg").size(12).text_color(t.accent)
@@ -999,7 +1189,7 @@ export default class Spaces extends View {
         if (e.key === "down" || e.key === "up") this.menuPointer = false;
         if (e.key === "down") this.moveMenu(1);
         else if (e.key === "up") this.moveMenu(-1);
-        else if (e.key === "enter") this.chooseMenu(this.at, cx);
+        else if (e.key === "enter") this.chooseMenu(this.at);
         else if (e.key === "escape") closeOverlay((this.menuProps ?? {}).overlay);
         else return;
         cx.notify();
@@ -1018,7 +1208,7 @@ export default class Spaces extends View {
           .when(i !== this.at && this.menuPointer, (el) => el.hover((s) => s.bg(t.hover)))
           .on_hover((hovered, cx) => { if (hovered) pointAt(i, cx); })
           .on_mouse_move((_e, cx) => pointAt(i, cx))
-          .on_click((_e, cx) => this.chooseMenu(i, cx))
+          .on_click(() => this.chooseMenu(i))
           .child(leading(it))
           .child(div().flex_1().min_w(0).truncate().child(it.label))));
   }
@@ -1027,10 +1217,15 @@ export default class Spaces extends View {
     const t = theme();
     const p = this.prompt ?? {};
     const editing = Boolean(p.group);
-    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+    const empty = !(this.input?.value() ?? "").trim();
+    const problem = this.promptProblem();
+    const disabled = empty || Boolean(problem);
+    const button = (id, text, primary, action, enabled = true) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
-      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium()
+      .when(enabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.88)).on_click(action))
+      .when(!enabled, (el) => el.opacity(0.45))
+      .child(text);
     return v_flex()
       .id("kent-group-prompt")
       .track_focus(this.handle)
@@ -1049,10 +1244,11 @@ export default class Spaces extends View {
         .child(div().flex_1().text_size(15).font_semibold().child(editing ? "Rename group" : "New group"))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
       .child(div().pt(14).pb(7).text_size(11.5).text_color(t.dim).child("Name"))
-      .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(12.8).text_color(t.foreground))
+      .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(this.inputFocused ? t.accent : t.input).bg(t.background).text_size(12.8).text_color(t.foreground))
+      .when(Boolean(problem), (el) => el.child(div().pt(6).text_size(11.5).text_color(t.dim).child(problem)))
       .child(h_flex().pt(18).gap(8).justify_end()
         .child(button("kent-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
-        .child(button("kent-save", editing ? "Rename" : "Create", true, () => this.submitPrompt())));
+        .child(button("kent-save", editing ? "Rename" : "Create", true, () => this.submitPrompt(), !disabled)));
   }
 
   // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
@@ -1084,13 +1280,13 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree, group = null }, t) {
+  row({ w, i, g, tree, group = null }, t, sp, tabPanes) {
     const on = w.active;
-    const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
+    const fromIndex = this.pressed === null ? -1 : sp.findIndex(s => s.id === this.pressed);
     const fromPosition = this.positionOf[this.pressed] ?? fromIndex;
     const targetPosition = this.positionOf[w.id] ?? i;
     const targetGroup = group ?? null;
-    const pane = programFor(w, this.ps ?? panes());
+    const pane = programFor(w, tabPanes);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -1114,33 +1310,49 @@ export default class Spaces extends View {
         this.over = w.id;
         this.overGroup = targetGroup;
         this.overGroupMachine = w.machine ?? null;
+        this.overUngroup = false;
       })
-      .on_mouse_move((_e, cx) => {
+      .on_mouse_move((e, cx) => {
+        if (this.pressed === null) return;
+        if (e.pressed_button !== "left") {
+          this.clearDrag();
+          cx.notify();
+          return;
+        }
         const source = spaces().find(s => s.id === this.pressed);
         const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
-        if (this.pressed !== null && (this.over !== over || this.overGroup !== targetGroup)) {
+        const nextGroup = over ? targetGroup : null;
+        const nextMachine = over ? (w.machine ?? null) : null;
+        if (this.over !== over || this.overGroup !== nextGroup || this.overGroupMachine !== nextMachine || this.overUngroup) {
           this.over = over;
-          this.overGroup = over ? targetGroup : null;
-          this.overGroupMachine = over ? (w.machine ?? null) : null;
+          this.overGroup = nextGroup;
+          this.overGroupMachine = nextMachine;
+          this.overUngroup = false;
           cx.notify();
         }
       })
       .on_mouse_up("left", (_e, cx) => {
+        if (this.pressed === null) return;
         const from = this.pressed;
         const over = this.over;
-        const source = spaces().find(s => s.id === from);
+        const spNow = spaces();
+        const source = spNow.find(s => s.id === from);
         const sourceGroup = source ? this.groupOf(from, source.machine ?? null) : null;
         const after = fromPosition < targetPosition;
-        this.pressed = null;
-        this.over = null;
-        this.overGroup = null;
-        this.overGroupMachine = null;
-        if (from !== null && over === w.id && from !== w.id) {
-          const index = spaces().findIndex(s => s.id === w.id);
+        this.clearDrag();
+        if (over === w.id && from !== w.id) {
+          const fromIdx = spNow.findIndex(s => s.id === from);
+          const targetIdx = spNow.findIndex(s => s.id === w.id);
+          const moveInDefault = () => {
+            if (fromIdx === -1 || targetIdx === -1) return;
+            const adj = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+            const dest = adj + (after ? 2 : 1);
+            if (dest !== fromIdx + 1) run("space.move", { id: from, index: dest });
+          };
           if (targetGroup !== null || sourceGroup !== null) {
             this.assignToGroup(from, targetGroup, w.id, after);
-            if (targetGroup === null && index !== -1) run("space.move", { id: from, index: index + 1 });
-          } else if (index !== -1) run("space.move", { id: from, index: index + 1 });
+            if (targetGroup === null) moveInDefault();
+          } else moveInDefault();
         } else if (from === w.id) run("space.select", { id: w.id });
         cx.notify();
       })
@@ -1174,16 +1386,18 @@ export default class Spaces extends View {
   }
 
   render() {
-    const role = (props() ?? {}).role;
-    if (role === "menu") return this.renderMenu();
-    if (role === "prompt") return this.renderPrompt();
+    if (this.menuProps) return this.renderMenu();
+    if (this.prompt) return this.renderPrompt();
     const t = theme();
     const collapsed = narrow();
     const sp = spaces();
-    this.ps = panes();
-    const list = this.grouped(t, collapsed);
+    const ps = panes();
+    const ms = machines();
+    const store = readStore();
+    const tabPanes = panesByTab(ps);
+    const list = this.grouped(t, collapsed, sp, ps, ms, store, tabPanes);
     if (this.pressed !== null && !collapsed) {
-      const drop = this.ungroupDrop(t);
+      const drop = this.ungroupDrop(t, sp, store);
       if (drop) list.push(drop);
     }
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
@@ -1194,6 +1408,24 @@ export default class Spaces extends View {
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
+      .on_mouse_up("left", (_e, cx) => {
+        if (this.pressed === null) return;
+        this.clearDrag();
+        cx.notify();
+      })
+      .on_window_mouse_move((e, cx) => {
+        if (this.pressed === null || e.pressed_button === "left") return;
+        this.clearDrag();
+        cx.notify();
+      })
+      .on_window_mouse_up("left", (e, cx) => {
+        if (this.pressed === null) return;
+        const p = e.local_position, b = e.bounds;
+        if (!p || !b || p.x < 0 || p.y < 0 || p.x > b.width || p.y > b.height) {
+          this.clearDrag();
+          cx.notify();
+        }
+      })
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).font_medium().text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child("Spaces"))
@@ -1207,7 +1439,6 @@ export default class Spaces extends View {
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
-        .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; this.overGroup = null; this.overGroupMachine = null; cx.notify(); })
         .children(list));
   }
 }

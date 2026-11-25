@@ -105,6 +105,12 @@ herdr-app check mods/kent
 herdr-app check mods/kent-agents
 ```
 
+两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）：
+
+```sh
+python3 scripts/check.py
+```
+
 Herdr 更新自带 icon 集后，可以在仓库根目录重新生成 icon 边界数据：
 
 ```sh

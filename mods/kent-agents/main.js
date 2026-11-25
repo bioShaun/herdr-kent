@@ -20,10 +20,11 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 // To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
 function toggleSidebar() {
   const width = find(layout(), "sidebar")?.size?.px;
-  if (!narrow()) setShared("sidebar.width", width);
+  const isNarrow = (width ?? Infinity) < 160;
+  if (!isNarrow) setShared("sidebar.width", width);
   // Mods edited before the rail went by width still read the flag.
-  setShared("sidebar.collapsed", !narrow());
-  run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
+  setShared("sidebar.collapsed", !isNarrow);
+  run("layout.resize", { id: "sidebar", px: isNarrow ? (shared("sidebar.width") ?? 232) : window()?.platform === "macos" ? 76 : 44 });
 }
 
 // Drops what an agent puts before its title: a status glyph or spinner and the separator
@@ -77,8 +78,10 @@ function duration(ms) {
 }
 
 // Program artwork uses the same visible-bound icon chip as Kent's spaces rows.
-function icon(p, size, color) {
-  return iconChip(p, theme(), { slot: size + 4, max: size + 2, color });
+// No explicit color: tintable glyphs follow the chip's own theme rule, exactly
+// as in the spaces list, so the same program reads the same in both lists.
+function icon(p, t, size) {
+  return iconChip(p, t, { slot: size + 4, max: size + 2 });
 }
 
 export default class Agents extends View {
@@ -171,13 +174,16 @@ export default class Agents extends View {
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
-  tree(all, addr, lead = []) {
-    const kids = all.filter((k) => k.parent === addr && k.state === "live");
+  tree(kidsByParent, addr, lead = [], seen = new Set([addr])) {
+    const kids = kidsByParent.get(addr) ?? [];
     return kids.flatMap((k, i) => {
+      if (seen.has(k.address)) return [];
+      const nextSeen = new Set(seen);
+      nextSeen.add(k.address);
       const last = i === kids.length - 1;
       return [
         { t: k, lines: [...lead, last ? "└" : "├"] },
-        ...this.tree(all, k.address, [...lead, last ? "" : "│"]),
+        ...this.tree(kidsByParent, k.address, [...lead, last ? "" : "│"], nextSeen),
       ];
     });
   }
@@ -185,7 +191,7 @@ export default class Agents extends View {
   subRow(t, s, shown, compact) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
-    const pic = icon(k.program, 14, t.foreground);
+    const pic = icon(k.program, t, 14);
     const on = k.address === shown;
     return h_flex()
       .id(`sub-${k.address}`)
@@ -198,7 +204,7 @@ export default class Agents extends View {
       .items_center()
       .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
-      .hover((s) => s.bg(t.hover))
+      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
@@ -231,16 +237,29 @@ export default class Agents extends View {
     const shown = focused()?.agent;
     const now = Date.now();
     this.track(list, now);
+    const kidsByParent = new Map();
+    for (const k of all) {
+      if (k.state !== "live" || !k.parent) continue;
+      let group = kidsByParent.get(k.parent);
+      if (!group) kidsByParent.set(k.parent, group = []);
+      group.push(k);
+    }
+    const treeCache = new Map();
+    const subsOf = (addr) => {
+      let cached = treeCache.get(addr);
+      if (!cached) treeCache.set(addr, cached = this.tree(kidsByParent, addr));
+      return cached;
+    };
     // A kept sub-agent (one with a pane) is in agents() too: where a tree shows
     // it, it gets no row of its own, unless it's pinned.
-    const nested = new Set(collapsed ? [] : list.flatMap((a) => this.tree(all, a.address).map((s) => s.t.address)));
+    const nested = new Set(collapsed ? [] : list.flatMap((a) => subsOf(a.address).map((s) => s.t.address)));
     list = list.filter((a) => a.pinned || !nested.has(a.address));
     const tabCounts = new Map();
     for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
     const byPriority = sort.id === "priority";
     // A helper's done is its own row's news: it doesn't pull a working parent out of Working.
     const kidRank = (k) => { const s = kidStatus(k, this.listed); return RANK[s === "done" ? "idle" : s] ?? 0; };
-    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => kidRank(s.t)))]));
+    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...subsOf(a.address).map((s) => kidRank(s.t)))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
     const pinned = list.filter((a) => a.pinned);
@@ -249,7 +268,7 @@ export default class Agents extends View {
     setAgentOrder(list.map((a) => a.address));
 
     const withKids = (a, i) => {
-      const subs = collapsed ? [] : this.tree(all, a.address);
+      const subs = collapsed ? [] : subsOf(a.address);
       const r = row(a, i, subs);
       if (this.folded.has(a.address)) return [r];
       return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
@@ -301,7 +320,7 @@ export default class Agents extends View {
     }
 
     const row = (a, i, subs = []) => {
-      const pic = icon(a.program, 16, t.foreground);
+      const pic = icon(a.program, t, 16);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
@@ -393,7 +412,8 @@ export default class Agents extends View {
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.
     const header = (g, index) => {
       const open = !this.folded.has(g.id);
-      const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
+      const topRank = g.members.reduce((m, a) => Math.max(m, rankOf(a) ?? 0), 0);
+      const top = { 4: "blocked", 3: "done", 2: "working", 1: "idle" }[topRank] ?? null;
       return h_flex()
         .id(g.id)
         .px(8)
@@ -457,7 +477,7 @@ export default class Agents extends View {
         ),
       )
       .when(list.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
+        el.child(div().px(16).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>

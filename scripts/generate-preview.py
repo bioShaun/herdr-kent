@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,13 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 WIDTH = 1440
 HEIGHT = 900
+SHARED_DEFAULTS = {
+    "layout": "kent",
+    "sidebar.width": 232,
+    "sidebar.collapsed": False,
+    "frame.welcomed": "finished",
+    "agents.sort": "priority",
+}
 
 HELPER = r'''#!/usr/bin/env python3
 import sys
@@ -224,7 +232,7 @@ def write_body(work, name, text):
     return path
 
 
-def prepare_home(tmp):
+def prepare_home(tmp, font):
     app_home = tmp / "app"
     (app_home / "layouts").mkdir(parents=True, exist_ok=True)
     (app_home / "mods").mkdir(parents=True, exist_ok=True)
@@ -238,18 +246,12 @@ def prepare_home(tmp):
         "sounds": {"enabled": False},
         "minimum_contrast": 1,
         "font_size": 14,
-        "ui_font": "JetBrainsMono Nerd Font Mono",
+        "ui_font": font,
         "appearance": "dark",
-        "font": "JetBrainsMono Nerd Font Mono",
+        "font": font,
         "telemetry": False,
     })
-    write_json(app_home / "shared.json", {
-        "layout": "kent",
-        "sidebar.width": 232,
-        "sidebar.collapsed": False,
-        "frame.welcomed": "finished",
-        "agents.sort": "priority",
-    })
+    write_json(app_home / "shared.json", dict(SHARED_DEFAULTS))
     write_window(app_home)
 
 
@@ -261,10 +263,21 @@ def write_window(app_home):
 
 
 def prepare_demo(tmp):
-    work = tmp
-    helper = work / "demo_agent.py"
+    helper = tmp / "demo_agent.py"
     helper.write_text(HELPER, encoding="utf-8")
     helper.chmod(0o755)
+
+    # Copies named after real entries in Herdr's program table: running them
+    # through python3 makes the interpreter detection resolve the basename, so
+    # demo rows show true program icons instead of fake codex/claude reports.
+    program_copies = {}
+    bindir = tmp / "bin"
+    bindir.mkdir(exist_ok=True)
+    for program in ("nvim", "docker", "astro", "pytest", "shell"):
+        copy = bindir / program
+        copy.write_text(HELPER, encoding="utf-8")
+        copy.chmod(0o755)
+        program_copies[program] = copy
 
     for name, branch in {
         "herdr-kent": "main",
@@ -276,19 +289,19 @@ def prepare_demo(tmp):
         "overlay-prototype": None,
         "scratchpad": None,
     }.items():
-        folder = work / name
+        folder = tmp / name
         if branch:
             init_repo(folder, branch)
         else:
             folder.mkdir(parents=True, exist_ok=True)
 
     bodies = {
-        "left": write_body(work, "left", LEFT_BODY),
-        "right": write_body(work, "right", RIGHT_BODY),
+        "left": write_body(tmp, "left", LEFT_BODY),
+        "right": write_body(tmp, "right", RIGHT_BODY),
     }
     for name in ("canvas-redesign", "brand-tokens", "runner-api", "docs-site", "agent-lab", "overlay-prototype", "scratchpad"):
-        bodies[name] = write_body(work, name, SIMPLE_BODY.replace("curated demo workspace", f"{name} · curated demo workspace"))
-    return work, helper, bodies
+        bodies[name] = write_body(tmp, name, SIMPLE_BODY.replace("curated demo workspace", f"{name} · curated demo workspace"))
+    return tmp, helper, bodies, program_copies
 
 
 def start_app(env, tmp):
@@ -330,13 +343,13 @@ def pane_for_terminal(listing, terminal):
     return None
 
 
-def make_space(env, helper, folder, body, name, tab_name, state="", app="pi", title=None, focus=False):
+def make_space(env, helper, folder, body, name, tab_name, state="", app="pi", title=None, focus=False, cmd=None):
     args = {
         "name": name,
         "folder": str(folder),
         "machine": "",
         "focus": focus,
-        "argv": [str(helper), state, app, title or name, str(body)],
+        "argv": [*(cmd or [str(helper)]), state, app, title or name, str(body)],
     }
     created = app_do(env, "space.new", args)
     if tab_name:
@@ -344,7 +357,7 @@ def make_space(env, helper, folder, body, name, tab_name, state="", app="pi", ti
     return created
 
 
-def create_demo_spaces(env, work, helper, bodies):
+def create_demo_spaces(env, work, helper, bodies, program_copies):
     ids = {}
     active = make_space(
         env,
@@ -367,15 +380,16 @@ def create_demo_spaces(env, work, helper, bodies):
     })
 
     specs = [
-        ("canvas-redesign", "tokens", "", "codex", "codex · tokens"),
-        ("brand-tokens", "supply", "", "python", "brand tokens"),
+        ("canvas-redesign", "tokens", "", "nvim", "nvim · tokens"),
+        ("brand-tokens", "supply", "", "docker", "docker · supply"),
         ("runner-api", "server", "blocked", "pi", "pi · server"),
-        ("docs-site", "docs", "", "python", "docs site"),
-        ("agent-lab", "evals", "", "claude", "claude · evals"),
+        ("docs-site", "docs", "", "astro", "astro · docs"),
+        ("agent-lab", "evals", "", "pytest", "pytest · evals"),
         ("overlay-prototype", "dnd", "idle", "gemini", "gemini · dnd"),
-        ("scratchpad", "shell", "", "python", "scratchpad"),
+        ("scratchpad", "shell", "", "shell", "scratchpad"),
     ]
     for name, tab_name, state, app, title in specs:
+        copy = program_copies.get(app) if not state else None
         created = make_space(
             env,
             helper,
@@ -387,6 +401,7 @@ def create_demo_spaces(env, work, helper, bodies):
             app=app,
             title=title,
             focus=False,
+            cmd=["python3", str(copy)] if copy else None,
         )
         ids[name] = created["space"]
 
@@ -404,13 +419,7 @@ def create_demo_spaces(env, work, helper, bodies):
 def write_groups(app_home, ids):
     shared_path = app_home / "shared.json"
     shared = json.loads(shared_path.read_text(encoding="utf-8")) if shared_path.exists() else {}
-    shared.update({
-        "layout": "kent",
-        "sidebar.width": 232,
-        "sidebar.collapsed": False,
-        "frame.welcomed": "finished",
-        "agents.sort": "priority",
-    })
+    shared.update(SHARED_DEFAULTS)
     shared["kent.groups.v1"] = {
         "version": 1,
         "groups": [
@@ -430,7 +439,7 @@ def write_groups(app_home, ids):
     write_window(app_home)
 
 
-def wait_for_agents(env, expected=6, timeout=12):
+def wait_for_agents(env, expected=4, timeout=12):
     deadline = time.monotonic() + timeout
     last_count = 0
     while time.monotonic() < deadline:
@@ -461,23 +470,35 @@ def normalize_png(frame, output):
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".tmp.png")
     try:
-        from PIL import Image
-    except ImportError:
-        shutil.copyfile(frame, temporary)
-        os.replace(temporary, output)
-        return "copied (Pillow unavailable; original pixel size kept)"
+        try:
+            from PIL import Image
+        except ImportError:
+            shutil.copyfile(frame, temporary)
+            os.replace(temporary, output)
+            return "copied (Pillow unavailable; original pixel size kept)"
 
-    with Image.open(frame) as image:
-        image.load()
-        if image.width > WIDTH:
-            height = round(image.height * WIDTH / image.width)
-            image = image.resize((WIDTH, height), Image.Resampling.LANCZOS)
-        if image.mode not in ("RGB", "RGBA"):
-            image = image.convert("RGB")
-        image.save(temporary, format="PNG", optimize=True)
-    os.replace(temporary, output)
-    with Image.open(output) as final:
-        return f"{final.width}x{final.height}"
+        with Image.open(frame) as image:
+            image.load()
+            if image.width > WIDTH:
+                height = round(image.height * WIDTH / image.width)
+                image = image.resize((WIDTH, height), Image.Resampling.LANCZOS)
+            if image.mode not in ("RGB", "RGBA"):
+                image = image.convert("RGB")
+            image.save(temporary, format="PNG", optimize=True)
+        os.replace(temporary, output)
+        with Image.open(output) as final:
+            return f"{final.width}x{final.height}"
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
 
 
 def stop_core(env):
@@ -494,15 +515,20 @@ def stop_core(env):
         pass
     if pid:
         deadline = time.monotonic() + 4
-        while time.monotonic() < deadline:
-            try:
-                os.kill(int(pid), 0)
-            except OSError:
-                break
+        while time.monotonic() < deadline and pid_alive(pid):
             time.sleep(0.15)
+        # An orphaned core would otherwise leak past the preview run.
+        if pid_alive(pid):
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except OSError:
+                return
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and pid_alive(pid):
+                time.sleep(0.1)
 
 
-def generate(output, keep=False):
+def generate(output, keep=False, font="JetBrainsMono Nerd Font Mono"):
     tmp_root = Path("/tmp") if Path("/tmp").is_dir() else None
     tmp = Path(tempfile.mkdtemp(prefix="kent-", dir=tmp_root)).resolve()
     session = f"kp{os.getpid()}"
@@ -510,15 +536,15 @@ def generate(output, keep=False):
     process = None
     log = None
     try:
-        prepare_home(tmp)
-        work, helper, bodies = prepare_demo(tmp)
+        prepare_home(tmp, font)
+        work, helper, bodies, program_copies = prepare_demo(tmp)
 
         process, log = start_app(env, tmp)
         wait_for_window(env)
         initial = app_ls(env)
         if initial.get("spaces"):
             raise PreviewError("the isolated Herdr window is not empty; refusing to use it")
-        ids = create_demo_spaces(env, work, helper, bodies)
+        ids = create_demo_spaces(env, work, helper, bodies, program_copies)
         stop_app(process, log)
         process = None
         log = None
@@ -550,9 +576,10 @@ def main():
     parser = argparse.ArgumentParser(description="Regenerate preview.png from an isolated Herdr rendering.")
     parser.add_argument("--output", type=Path, default=ROOT / "preview.png", help="target PNG (default: preview.png)")
     parser.add_argument("--keep", action="store_true", help="keep the temporary isolated home for debugging")
+    parser.add_argument("--font", default="JetBrainsMono Nerd Font Mono", help="UI and terminal font for the capture (default: JetBrainsMono Nerd Font Mono)")
     args = parser.parse_args()
     try:
-        generate(args.output, keep=args.keep)
+        generate(args.output, keep=args.keep, font=args.font)
     except (PreviewError, subprocess.TimeoutExpired, OSError) as exc:
         print(f"generate-preview: {exc}", file=sys.stderr)
         return 1

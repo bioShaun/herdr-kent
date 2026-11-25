@@ -105,6 +105,12 @@ herdr-app check mods/kent
 herdr-app check mods/kent-agents
 ```
 
+Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with:
+
+```sh
+python3 scripts/check.py
+```
+
 After Herdr updates its shipped icon set, regenerate the icon metrics from the repository root:
 
 ```sh

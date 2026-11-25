@@ -16,10 +16,21 @@ function shippedMetric(path) {
 }
 
 export function darkSurface(color, fallback = true) {
-  const m = /^#([0-9a-f]{6})/i.exec(color ?? "");
-  if (!m) return fallback;
-  const n = parseInt(m[1], 16);
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const hex = (color ?? "").trim();
+  const m6 = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(hex);
+  let r, g, b;
+  if (m6) {
+    const n = parseInt(m6[1], 16);
+    r = (n >> 16) & 255;
+    g = (n >> 8) & 255;
+    b = n & 255;
+  } else {
+    const m3 = /^#([0-9a-f]{3})[0-9a-f]?$/i.exec(hex);
+    if (!m3) return fallback;
+    r = parseInt(m3[1][0] + m3[1][0], 16);
+    g = parseInt(m3[1][1] + m3[1][1], 16);
+    b = parseInt(m3[1][2] + m3[1][2], 16);
+  }
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
 }
 
@@ -47,7 +58,7 @@ function placeArtwork(el, left, top, width, height) {
 
 export function iconChip(p, t, { slot = 20, max = 18, color = null, empty = false } = {}) {
   if (!p?.icon && !empty) return null;
-  const dark = darkSurface(t.chrome, t.is_dark !== false);
+  const dark = darkSurface(t.chrome);
   const edgeHot = dark ? "#ffffff26" : "#00000024";
   const edgeMid = dark ? "#ffffff14" : "#00000014";
   const edgeLow = dark ? "#ffffff06" : "#00000006";
