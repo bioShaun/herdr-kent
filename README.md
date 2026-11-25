@@ -70,7 +70,7 @@ These move through spaces in the order Kent draws them, skipping rows hidden ins
 ## Using groups
 
 - Right-click a space to open its menu.
-- Choose `New group with this space…` to create a group.
+- Choose `Group this space…` to create a group containing that space.
 - Choose `Move to …` to file the space under an existing group.
 - Choose `No group` to ungroup it.
 - Drag a space onto a group header to append it to that group.

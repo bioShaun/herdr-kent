@@ -19,7 +19,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 
 - Click a space to show it. Dragging a space over another row shows the violet insertion line; dropping reorders inside a group or uses Herdr's normal `space.move` behavior for loose spaces.
 - Drop a space on a group header to append it to that group. While dragging a grouped space, a “Drop here to ungroup” target appears at the bottom of the list.
-- Right-click a space for a keyboard-navigable menu: Open, Rename, No group, one “Move to …” item for each group on that machine, “New group with this space…”, and Close. On git checkouts the same menu also includes Herdr's New/Open/Remove worktree actions.
+- Right-click a space for a keyboard-navigable menu: Open, Rename, No group, one “Move to …” item for each group on that machine, “Group this space…”, and Close. On git checkouts the same menu also includes Herdr's New/Open/Remove worktree actions.
 - Right-click a group to fold/unfold, rename, move it up or down, or delete it. Deleting a group never closes spaces; they simply become ungrouped.
 - Click a group header to fold or unfold it. The command palette can also open “New space group” and “Group active space”.
 - Groups are per machine. Their names, folded state, membership and in-group order persist in shared state as `kent.groups.v1` and redraw immediately.

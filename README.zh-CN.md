@@ -70,7 +70,7 @@ herdr-app do layout.switch '{"name":"main"}'
 ## 使用分组
 
 - 右键一个 space 打开菜单。
-- 选择 `New group with this space…` 创建新分组。
+- 选择 `Group this space…` 创建包含该空间的新分组。
 - 选择 `Move to …` 移入已有分组。
 - 选择 `No group` 移出分组。
 - 把 space 拖到分组标题上，会加入该分组。

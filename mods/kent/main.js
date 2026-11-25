@@ -818,7 +818,7 @@ export default class Spaces extends View {
       { separator: true },
       { label: "No group", icon: "folder", action: "assign", group: null, checked: !current },
       ...groups.map((g) => ({ label: `Move to ${g.name}`, icon: "folder", action: "assign", group: g.id, checked: current === g.id })),
-      { label: "New group with this space…", icon: "folder-plus", action: "new-group" },
+      { label: "Group this space…", icon: "folder-plus", action: "new-group" },
       { separator: true },
       { label: "Close space", icon: "x", action: "close", danger: true },
     ];
