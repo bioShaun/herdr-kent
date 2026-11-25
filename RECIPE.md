@@ -12,7 +12,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 - **Machines:** when another machine is known, its spaces stay under that machine's header, as in Herdr. Grouping happens inside each machine, never across machines.
 - **A group header:** a 24px dim 11px label with the group name, a count, and a chevron. A folded group that contains a blocked or finished agent shows a small status dot.
 - **A space row:** 28px high, with a 20px program-icon chip, the space name, Herdr's usual repo/branch/ahead/behind tail when useful, and a small dot for blocked or done. The active space is a pill in `selected` with a 1px violet border.
-- **An icon chip:** a 1px-neutral pseudo-gradient edge, brighter at the top/left and quieter at the bottom/right. The polarity is chosen from the luminance of the actual `chrome` surface, not merely the system appearance: dark chrome uses white alpha (`#ffffff26` → `#ffffff06`); light chrome uses black alpha (`#00000024` → `#00000006`). Inside is the program tile, or a very quiet translucent neutral when the program has no tile, so dark and light program artwork stays readable without being recolored. The backing follows the artwork aspect for the shipped wide SVGs (`crush`, `mastracode`, `pig`, `prime-agent`) instead of stretching them into squares. Agents use the same chip.
+- **An icon chip:** a 1px-neutral pseudo-gradient edge, brighter at the top/left and quieter at the bottom/right. The polarity is chosen from the luminance of the actual `chrome` surface, not merely the system appearance: dark chrome uses white alpha (`#ffffff26` → `#ffffff06`); light chrome uses black alpha (`#00000024` → `#00000006`). Inside is the program tile, or a very quiet translucent neutral when the program has no tile, so dark and light program artwork stays readable without being recolored. The backing follows the visible artwork bounds generated for every shipped SVG icon, softly compressed to the 0.625–1.6 range so extreme logos keep their direction without becoming pills. Stroke-only utility icons keep their designed padding; filled artwork is optically centered and fitted. Agents use the same chip.
 - **Ungrouped spaces:** shown after the groups inside the same machine, without another heading.
 
 ## How it behaves
@@ -33,7 +33,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
   - the shared group store (`groups`, ordered `in` membership arrays),
   - `machineRows` and `groupHead` rendering,
   - program-icon rows using `panes()` and `program.icon` / `image` / `svg`,
-  - the theme-aware pseudo-gradient icon chip described above,
+  - the generated visible-bound icon metrics and theme-aware pseudo-gradient chip described above,
   - drag assignment and in-group ordering,
   - popup menus, group rename/create dialogs, and palette commands through `nextCommand()`.
 - **Mod** `mods/kent-agents/`: a copy of Herdr 0.1.18's shipped `agents` mod, with only the program-icon helper replaced by the same chip and its self-opened sort popup renamed to `kent-agents`.
@@ -47,7 +47,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 - The store is local Herdr shared state. It survives restarts of this app, but it is not synchronized to another Herdr client or written into the remote machine's home.
 - Ordering inside a group belongs to Kent. Ungrouped spaces still use Herdr's own space ordering.
 - In the narrow rail (sidebar below 160px), group labels collapse away and rows use the compact numbered presentation.
-- Icon aspect ratios are built in only for the non-square SVGs shipped with Herdr 0.1.18; unknown custom non-square icons fall back to square fitting rather than being measured at runtime.
+- Icon metrics are pregenerated for the SVGs shipped with Herdr 0.1.18 rather than measured at runtime. `scripts/generate-icon-metrics.py` refreshes them after Herdr adds icons; unknown custom non-square icons still fall back to square fitting.
 - The mods open their own overlays as `mod: "kent"` and `mod: "kent-agents"`; renaming either folder means changing those strings and the layout reference together.
 - `herdr-app check` intentionally runs with empty live data, so grouping interactions still need a real-window pass.
 

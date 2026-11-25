@@ -11,7 +11,7 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 - Groups spaces under named labels such as `design`, `code`, or `experiments`.
 - Groups are scoped to each machine; remote and local spaces are never mixed.
 - Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
-- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Wide shipped icons keep their aspect instead of being stretched into squares.
+- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares.
 - Agents use the same icon chips through the included `kent-agents` mod.
 - Spaces can be assigned from the right-click menu or dragged onto a group header.
 - Spaces can be reordered inside a group, dragged between groups, or dragged out to become ungrouped.
@@ -92,7 +92,7 @@ Kent does not hardcode a light or dark theme. It follows `settings.json`, the sy
 - Group state is stored locally in Herdr shared state under `kent.groups.v1`; it is not synchronized to other Herdr clients.
 - Ordering inside groups belongs to Kent. Ungrouped spaces continue to use Herdr's own ordering.
 - Kent was built and tested against Herdr 0.1.18.
-- Aspect correction is built in for Herdr's shipped non-square SVG icons; unusual custom icons fall back to square fitting.
+- Visible-bound metrics are generated for the SVG icons shipped with Herdr 0.1.18. Icons added by a future Herdr version can be measured again with `scripts/generate-icon-metrics.py`; unknown custom icons fall back to square fitting.
 
 ## Development
 
@@ -103,6 +103,12 @@ Validate the mod from the repository root:
 ```sh
 herdr-app check mods/kent
 herdr-app check mods/kent-agents
+```
+
+After Herdr updates its shipped icon set, regenerate the icon metrics from the repository root:
+
+```sh
+uv run --with svgpathtools python scripts/generate-icon-metrics.py
 ```
 
 `RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.

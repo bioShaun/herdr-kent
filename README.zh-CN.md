@@ -11,7 +11,7 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 - 可以把 spaces 放入 `设计`、`代码`、`实验` 等命名分组。
 - 分组按机器隔离；本机和远程机器的 spaces 不会混在一起。
 - 分组标题可以折叠/展开，显示成员数量；折叠后仍会显示 blocked/done 状态。
-- space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；宽图标会保持原始宽高比，不再被拉成方形。
+- space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。
 - Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip。
 - 可以通过右键菜单把 space 放入分组，也可以直接拖到分组标题上。
 - 可以在组内排序、在分组之间拖动，也可以拖出来变成未分组。
@@ -92,7 +92,7 @@ Kent 不再写死亮色或暗色主题。它会跟随 `settings.json`、系统�
 - 分组状态保存在本机 Herdr shared state 的 `kent.groups.v1` 里，不会同步到其他 Herdr 客户端。
 - 组内排序由 Kent 管理；未分组 spaces 仍使用 Herdr 自己的排序。
 - Kent 是基于 Herdr 0.1.18 开发和测试的。
-- 目前只对 Herdr 自带的非方形 SVG icon 内置了宽高比修正；特殊自定义 icon 会退回方形适配。
+- 可见边界数据目前覆盖 Herdr 0.1.18 自带的 SVG icon；未来 Herdr 新增 icon 后可以用 `scripts/generate-icon-metrics.py` 重新生成。未知自定义 icon 仍会退回方形适配。
 
 ## 开发
 
@@ -103,6 +103,12 @@ Spaces mod 源码在 `mods/kent/main.js`；Agents 变体在 `mods/kent-agents/ma
 ```sh
 herdr-app check mods/kent
 herdr-app check mods/kent-agents
+```
+
+Herdr 更新自带 icon 集后，可以在仓库根目录重新生成 icon 边界数据：
+
+```sh
+uv run --with svgpathtools python scripts/generate-icon-metrics.py
 ```
 
 `RECIPE.md` 是按照 Herdr Gallery 格式编写的详细实现说明。
