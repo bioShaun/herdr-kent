@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
+  <!-- Kent thumbnail: the grouped Spaces sidebar is the hero.
+       Folder group headers (violet) + indented members, one folded group
+       keeping its red status dot; the work area stays quiet. No text. -->
+  <!-- window -->
+  <rect x="10" y="14" width="300" height="172" rx="6" fill="#232529" stroke="#3a3d45" stroke-width="1.5"/>
+  <rect x="158" y="14" width="1.5" height="172" fill="#3a3d45"/>
+
+  <!-- group: design (open) -->
+  <rect x="22" y="28" width="6" height="4" rx="1" fill="#a78bfa"/>
+  <rect x="22" y="30.5" width="14" height="9" rx="1.5" fill="#a78bfa"/>
+  <rect x="42" y="31.5" width="36" height="6" rx="3" fill="#9ca3af"/>
+  <rect x="84" y="31.5" width="9" height="6" rx="2" fill="#3a3d45"/>
+  <path d="M138 32.5 h9 l-4.5 5 z" fill="#565a63"/>
+  <!-- members, indented -->
+  <rect x="36" y="47" width="7" height="7" rx="2" fill="#565a63"/>
+  <rect x="48" y="48" width="46" height="5" rx="2.5" fill="#6b7280"/>
+  <!-- active member: violet edge + violet bar -->
+  <rect x="28" y="60" width="3.5" height="11" rx="1.75" fill="#a78bfa"/>
+  <rect x="36" y="62" width="7" height="7" rx="2" fill="#8b8f98"/>
+  <rect x="48" y="63" width="54" height="5" rx="2.5" fill="#a78bfa"/>
+  <rect x="36" y="77" width="7" height="7" rx="2" fill="#565a63"/>
+  <rect x="48" y="78" width="38" height="5" rx="2.5" fill="#6b7280"/>
+
+  <!-- group: code (folded) — status dot stays visible -->
+  <rect x="22" y="94" width="6" height="4" rx="1" fill="#a78bfa"/>
+  <rect x="22" y="96.5" width="14" height="9" rx="1.5" fill="#a78bfa"/>
+  <rect x="42" y="97.5" width="28" height="6" rx="3" fill="#9ca3af"/>
+  <rect x="76" y="97.5" width="9" height="6" rx="2" fill="#3a3d45"/>
+  <circle cx="124" cy="100.5" r="3.5" fill="#f87171"/>
+  <path d="M139 96 v9 l5 -4.5 z" fill="#565a63"/>
+
+  <!-- group: experiments (open, one member) -->
+  <rect x="22" y="116" width="6" height="4" rx="1" fill="#a78bfa"/>
+  <rect x="22" y="118.5" width="14" height="9" rx="1.5" fill="#a78bfa"/>
+  <rect x="42" y="119.5" width="42" height="6" rx="3" fill="#9ca3af"/>
+  <rect x="90" y="119.5" width="9" height="6" rx="2" fill="#3a3d45"/>
+  <path d="M138 120.5 h9 l-4.5 5 z" fill="#565a63"/>
+  <rect x="36" y="135" width="7" height="7" rx="2" fill="#565a63"/>
+  <rect x="48" y="136" width="42" height="5" rx="2.5" fill="#6b7280"/>
+
+  <!-- default group hint -->
+  <rect x="22" y="152" width="14" height="9" rx="1.5" fill="#565a63"/>
+  <rect x="42" y="153.5" width="30" height="6" rx="3" fill="#6b7280"/>
+  <rect x="36" y="168" width="7" height="7" rx="2" fill="#4b4f58"/>
+  <rect x="48" y="169" width="34" height="5" rx="2.5" fill="#4b4f58"/>
+
+  <!-- quiet work area -->
+  <rect x="170" y="26" width="38" height="12" rx="3" fill="#3a3d45"/>
+  <rect x="214" y="26" width="26" height="12" rx="3" fill="#2e3138"/>
+  <rect x="170" y="48" width="130" height="126" rx="4" fill="#26282e" stroke="#4a4d55" stroke-width="1.5"/>
+  <rect x="178" y="57" width="32" height="5" rx="2.5" fill="#565a63"/>
+  <rect x="178" y="76" width="72" height="4" rx="2" fill="#3f434b"/>
+  <rect x="178" y="88" width="56" height="4" rx="2" fill="#3f434b"/>
+  <rect x="178" y="100" width="64" height="4" rx="2" fill="#3f434b"/>
+</svg>

@@ -11,12 +11,15 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 - 可以把 spaces 放入 `设计`、`代码`、`实验` 等命名分组；没有命名分组的 spaces 会留在 `default`；使用命名分组后，`default` 会显示为可折叠标题。
 - 分组按机器隔离；本机和远程机器的 spaces 不会混在一起。
 - 分组标题可以折叠/展开，显示成员数量；折叠后仍会显示 blocked/done 状态。
-- space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。
-- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip。
+- space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。名称显示不全时（以及窄栏编号模式下），悬停可以看到完整名称。
+- 名称优先：放得下就保持完整，让 git 尾巴让位；尾巴只剩几个字母时直接不显示。长名称从中间省略，保留更有辨识度的结尾。
+- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip 和名称 tooltip；space 名后面的细节在只剩残片时干脆不显示。
+- 某台机器的标题滚出列表后，它的名字会留在 `Spaces` 旁边，滚回去即消失；点一下可以回到该机器的标题。
+- 两个列表的滚动条只在鼠标停留或滚动时出现。
 - 可以直接在分组里新建 space，也可以通过右键菜单放入分组，或直接拖到分组标题上。
 - 可以在组内排序、在分组之间拖动，也可以移回 `default` 组。
 - 保留 Herdr 原有的 worktree 嵌套、机器分组、git 信息和 space 排序行为。
-- 很窄的侧栏下仍然支持紧凑的编号 rail 模式。
+- 很窄的侧栏下仍然支持紧凑的编号 rail 模式。编号就是该行在列表里的位置，可选快捷键 `ctrl-1` … `ctrl-9` 按这个编号选择。
 
 ## 安装
 
@@ -28,19 +31,29 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 
 ### 手动安装
 
-把 layout 和 mod 复制到 Herdr home。如果你使用自定义 `HERDR_APP_HOME`，请把下面的 `~/.config/herdr-app` 替换成你的目录。
-
 ```sh
 git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
+scripts/install.sh
+```
 
-cp layouts/kent.json layouts/kent.png ~/.config/herdr-app/layouts/
+`scripts/install.sh` 会把 layout 和两个 mod 复制到 `~/.config/herdr-app`（设置了 `HERDR_APP_HOME` 就用它，也可以把目标目录作为参数传入），被替换的文件先备份到 `<herdr-home>/kent-backup-<时间>/`，然后对装好的 mod 运行 `herdr-app check`。它不会动 `keys.json`。
+
+也可以手动复制同样的文件（使用自定义 `HERDR_APP_HOME` 时，把 `~/.config/herdr-app` 换成你的目录）：
+
+```sh
+cp layouts/kent.json layouts/kent.svg ~/.config/herdr-app/layouts/
 mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
 cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
 cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
 
 herdr-app check ~/.config/herdr-app/mods/kent
 herdr-app check ~/.config/herdr-app/mods/kent-agents
+```
+
+然后切换到这个 layout：
+
+```sh
 herdr-app do layout.switch '{"name":"kent"}'
 ```
 
@@ -59,13 +72,22 @@ herdr-app do layout.switch '{"name":"main"}'
   "layout:kent": {
     "alt-down": "kent.next",
     "alt-up": "kent.prev",
+    "ctrl-1": "kent.select1",
+    "ctrl-2": "kent.select2",
+    "ctrl-3": "kent.select3",
+    "ctrl-4": "kent.select4",
+    "ctrl-5": "kent.select5",
+    "ctrl-6": "kent.select6",
+    "ctrl-7": "kent.select7",
+    "ctrl-8": "kent.select8",
+    "ctrl-9": "kent.select9",
     "ctrl-shift-pagedown": "kent.next",
     "ctrl-shift-pageup": "kent.prev"
   }
 }
 ```
 
-这些快捷键会按照 Kent 实际显示的顺序切换 spaces，并跳过折叠分组里隐藏的行。
+第一组快捷键按照 Kent 实际显示的顺序切换 spaces，并跳过折叠分组里隐藏的行。`ctrl-1` … `ctrl-9` 选中侧栏里第 N 行，也就是窄栏编号打印的那个数字。Herdr 自带的 `ctrl-N` 按它内部的 space 顺序选择，一旦分组和 worktree 嵌套打乱了行序，两者就会对不上；Kent 显示期间 `layout:kent` 的优先级高于 `global`。之前合并过旧版 `layout:kent` 的话，把这九行 `ctrl-N` 补进去即可。
 
 ## 使用分组
 
@@ -75,6 +97,7 @@ herdr-app do layout.switch '{"name":"main"}'
 - 选择 `Move to default` 移回 default 组。
 - 把 space 拖到分组标题上，会加入该分组。
 - 把 space 拖到另一行附近，可以调整顺序。
+- 拖动时把 space 按在列表的上边缘或下边缘附近，列表会朝那个方向滚动，看不见的分组也能拖到。
 - 拖动已分组 space 时，列表底部会出现 `Move to default`，拖到这里可以移出命名分组。
 - 单击分组标题可以折叠或展开；使用标题上的 `+` 可以在该分组里新建 space。
 - 右键命名分组标题可以在组内新建 space、重命名、上下移动、折叠/展开或删除分组。删除分组不会关闭其中的 spaces。
@@ -133,7 +156,9 @@ uv run --with svgpathtools python scripts/generate-icon-metrics.py
 python3 scripts/generate-preview.py
 ```
 
-脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`（同时写入设置页缩略图副本 `layouts/kent.png`，由 layout 的 `preview` 字段引用），结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。
+脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`，结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。
+
+设置页选择器的缩略图是独立维护的：layout 的 `preview` 字段指向 `layouts/kent.svg`，这是一张手绘的 320×200 示意图，沿用内置缩略图的极简风格，但让分组侧栏当主角——紫色文件夹组头、缩进成员行、保留红色状态点的折叠组，工作区退居背景。完整截图缩到卡片大小会糊成一团。布局结构变化时请手动更新这张示意图。
 
 `RECIPE.md` 是按照 Herdr Gallery 格式编写的详细实现说明。
 

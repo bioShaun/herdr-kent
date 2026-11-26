@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, settings } from "herdr";
 import { iconChip } from "./icon-chip.js";
 
 function find(node, id) {
@@ -16,6 +16,12 @@ function find(node, id) {
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
+// A row in the priority view reads "space · detail". The detail is drawn only where it can
+// say something: with less room than this (about seven characters), or less than all of it
+// takes, the space name keeps the line. The tooltip has the detail either way.
+const DETAIL_MIN = 56;
+// A 13px monospace character, for estimating the detail.
+const CHAR = 7.8;
 
 // To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
 function toggleSidebar() {
@@ -24,7 +30,7 @@ function toggleSidebar() {
   if (!isNarrow) setShared("sidebar.width", width);
   // Mods edited before the rail went by width still read the flag.
   setShared("sidebar.collapsed", !isNarrow);
-  run("layout.resize", { id: "sidebar", px: isNarrow ? (shared("sidebar.width") ?? 232) : window()?.platform === "macos" ? 76 : 44 });
+  run("layout.resize", { id: "sidebar", px: isNarrow ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
 }
 
 // Drops what an agent puts before its title: a status glyph or spinner and the separator
@@ -95,7 +101,24 @@ export default class Agents extends View {
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
+    // What each row leaves after its space name (the layout reports it), and the unit the
+    // layout reports sizes in, by the 28px time box.
+    this.room = new Map();
+    this.pxScale = 0;
     if (!checking()) cx.timer.every(30000, (cx) => cx.notify());
+  }
+
+  // What the row leaves after its name, for the detail: the layout reports the detail's box
+  // once laid out, empty or filled. The unit of reported sizes is read two ways by the kit's
+  // notes, so the time box's known 28px is the yardstick. A change redraws the row.
+  detailRoom(address, size, cx) {
+    this.room ??= new Map();
+    const scale = this.pxScale || Number(settings().zoom) || 1;
+    const room = size.width / scale;
+    if (Math.abs(room - (this.room.get(address) ?? -1)) < 0.5) return;
+    if (this.room.size > 2000) this.room.clear();
+    this.room.set(address, room);
+    cx.notify();
   }
 
   // Stamps agents whose state changed. Done and idle count as one: looking at a
@@ -337,6 +360,7 @@ export default class Agents extends View {
           .when(a.focused, (el) => el.bg(t.selected))
           .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
           .on_click(() => run("pane.focus", { pane: a.pane }))
+          .tooltip([machine, a.space_name || label(a)].filter(Boolean).join(" · "))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
@@ -364,6 +388,12 @@ export default class Agents extends View {
       // Without a space header above (priority, pinned) the row names its space.
       const full = byPriority || isPinned;
       const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
+      // The row shows what fits; the tooltip says the whole of it. The detail goes only where
+      // it is more than a stub (see DETAIL_MIN); until the row has been laid out, it is drawn.
+      const tip = [machine, name, more].filter(Boolean).join(" · ");
+      const detailText = full && more ? `\u00b7 ${more}` : "";
+      const room = this.room?.get(a.address);
+      const showDetail = Boolean(detailText) && (room === undefined || room >= Math.min(DETAIL_MIN, detailText.length * CHAR));
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -389,11 +419,21 @@ export default class Agents extends View {
             cx.notify();
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-          .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
-          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
+          // A long name is cut in the middle: its end often tells agents apart ("…-manager"),
+          // and the tooltip has the whole of it.
+          .child(div().min_w(0).max_w(showDetail ? 120 : 200).truncate()
+            .when(name.length > 16, (el) => el.text_ellipsis_middle())
+            .text_color(idle ? t.muted : t.foreground).tooltip(tip).child(name))
+          // The detail's box stays whether or not the text is in it: it is how the row learns
+          // what the name leaves.
+          .when(Boolean(detailText), el => el.child(div().id(`ag-detail-${a.address}`).flex_1().min_w(0).truncate().text_color(t.dim)
+            .on_size_change((size, cx) => this.detailRoom(a.address, size, cx))
+            .when(showDetail, box => box.child(detailText)))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .child(h_flex().w(28).flex_none().items_center().justify_end()
+        // The time box is always 28px wide: its reported size tells the unit sizes come in.
+        .child(h_flex().id(`ag-when-${a.address}`).w(28).flex_none().items_center().justify_end()
+          .on_size_change((size) => { if (size.width > 0) this.pxScale = size.width / 28; })
           .when(this.hovered === a.address, el => el.child(pin))
           .when(this.hovered !== a.address && Boolean(when), el => el.child(div().text_size(11).text_color(t.dim).child(duration(now - when)))))
         .child(this.status(t, a, byPriority && !isPinned));
@@ -479,7 +519,7 @@ export default class Agents extends View {
       .when(list.length === 0 && !collapsed, (el) =>
         el.child(div().px(16).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("hover").children(rows))
       .when(collapsed, (el) =>
         el.child(
           h_flex()
