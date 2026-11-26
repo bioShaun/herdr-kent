@@ -39,6 +39,9 @@ const LONG_NAME = 16;
 // How close to the list's top or bottom edge a dragged row is held for the list to scroll
 // that way, so a group out of sight can be dropped on. In the list's own pixels.
 const EDGE = 28;
+// A row dragged past a group header on its way somewhere else should not flash that
+// header's drop ring, so the ring waits this long before it shows. In milliseconds.
+const RING_DELAY = 150;
 // A git tail narrower than this (about eight characters) is not drawn: a stub of a repo or
 // branch name next to a full name reads as noise.
 const TAIL_MIN = 56;
@@ -1091,6 +1094,9 @@ export default class Spaces extends View {
     this.over = null;
     this.overGroup = null;
     this.overGroupMachine = null;
+    this.ringKey = null; // the group header whose drop ring has waited long enough
+    this.ringMachine = null;
+    this.ringToken = null;
     this.overUngroup = false;
     this.positionOf = {};
     this.seen = [];
@@ -1423,6 +1429,9 @@ export default class Spaces extends View {
     this.over = null;
     this.overGroup = null;
     this.overGroupMachine = null;
+    this.ringKey = null;
+    this.ringMachine = null;
+    this.ringToken = null;
     this.overUngroup = false;
     // The edge loop stops on this; the next drag decides its own edge from zero.
     this.edgeDir = 0;
@@ -1479,7 +1488,7 @@ export default class Spaces extends View {
     this.edgeDir = dir;
     if (dir) { if (!this.edgeTask) this.runEdge(cx); }
     // Off the edge: the row under the pointer may have changed since the list last moved.
-    else cx.timer.after(60, (cx) => { if (this.retarget()) cx.notify(); });
+    else cx.timer.after(60, (cx) => { if (this.retarget(cx)) cx.notify(); });
   }
 
   // One child past the edge every 90ms, until the pointer leaves the edge, the row is
@@ -1490,7 +1499,7 @@ export default class Spaces extends View {
         while (this.edgeDir && this.pressed !== null) {
           await cx.sleep(90);
           if (!this.edgeDir || this.pressed === null) break;
-          if (this.retarget()) cx.notify();
+          if (this.retarget(cx)) cx.notify();
           if (!this.scrollEdge(this.edgeDir)) await cx.sleep(250);
         }
       } finally { this.edgeTask = false; }
@@ -1520,9 +1529,31 @@ export default class Spaces extends View {
     return true;
   }
 
+  // A header's drop ring is armed by a timer, not by when a frame happens to be drawn:
+  // it shows only once the pointer has stayed on that header long enough.
+  ringFor(gid, machine, cx) {
+    if (this.ringKey === gid && this.ringMachine === machine) return;
+    this.ringKey = null;
+    this.ringMachine = machine;
+    const token = (this.ringToken = {});
+    cx.timer.after(RING_DELAY, (cx) => {
+      if (this.ringToken !== token) return;
+      this.ringKey = gid;
+      this.ringMachine = machine;
+      cx.notify();
+    });
+  }
+
+  // Off a header the wait starts over.
+  ringReset() {
+    this.ringKey = null;
+    this.ringMachine = null;
+    this.ringToken = null;
+  }
+
   // The list moved under a pointer that didn't: say which row is under it now, as a
   // move over that row would have. True when that changed the drop target.
-  retarget() {
+  retarget(cx) {
     if (this.pressed === null) return false;
     const m = this.under();
     const source = spaces().find(s => s.id === this.pressed);
@@ -1532,6 +1563,9 @@ export default class Spaces extends View {
     const overGroupMachine = overGroup === null ? null : (m.machine ?? null);
     const overUngroup = Boolean(mine && m.drop);
     if (this.over === over && this.overGroup === overGroup && this.overGroupMachine === overGroupMachine && this.overUngroup === overUngroup) return false;
+    // On a header, the ring waits; anywhere else it is dropped at once.
+    if (overGroup !== null && over === null) this.ringFor(overGroup, overGroupMachine, cx);
+    else this.ringReset();
     this.over = over;
     this.overGroup = overGroup;
     this.overGroupMachine = overGroupMachine;
@@ -1964,7 +1998,10 @@ export default class Spaces extends View {
     const statuses = members.map((r) => r.w.status);
     const status = statuses.includes("blocked") ? "blocked" : statuses.includes("done") ? "done" : null;
     const sameMachine = (this.overGroupMachine ?? null) === (machine ?? null);
-    const highlighted = this.pressed !== null && this.overGroup === g.id && this.over === null && sameMachine;
+    // A ring that shows at once flickers under every glance a drag takes across a
+    // header on its way past; hold still on it for a moment and it is a target.
+    const rested = this.ringKey === g.id && this.ringMachine === (machine ?? null);
+    const highlighted = this.pressed !== null && this.overGroup === g.id && this.over === null && sameMachine && rested;
     return h_flex()
       .id(`kent-group-${machine ?? "local"}-${g.id}`)
       .h(24)
@@ -2001,6 +2038,7 @@ export default class Spaces extends View {
           this.overGroup = g.id;
           this.overGroupMachine = machine ?? null;
           this.overUngroup = false;
+          this.ringFor(g.id, machine ?? null, cx);
           cx.notify();
         }
       })
@@ -2432,6 +2470,7 @@ export default class Spaces extends View {
         const source = spaces().find(s => s.id === this.pressed);
         const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
         const nextGroup = over ? targetGroup : null;
+        if (over !== null) this.ringReset();
         const nextMachine = over ? (w.machine ?? null) : null;
         if (this.over !== over || this.overGroup !== nextGroup || this.overGroupMachine !== nextMachine || this.overUngroup) {
           this.over = over;
