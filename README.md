@@ -138,6 +138,14 @@ node scripts/test-group-sync.js
 node scripts/test-group-sync.js --core
 ```
 
+The drag checks need the real pointer, since a mod only sees real mouse events. With Accessibility permission for **Herdr Core**, `tests/hid-drag.py` posts HID-level events (the cursor really moves, the button really goes down) and reads the result back from `herdr-app shot`. `scan-edge` puts the list back at the top, then holds a dragged row at each y it is given and reports whether rows moved - the regression check for the drag-to-scroll band:
+
+```sh
+uv run --with pyobjc-framework-Quartz --with pillow python tests/hid-drag.py scan-edge
+```
+
+It moves your real cursor and presses the real button; coordinates and options are in the script's header.
+
 Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with the following command. Its `herdr-app check` runs use a temporary isolated app home/core session, so they do not disturb the running default Herdr core:
 
 ```sh

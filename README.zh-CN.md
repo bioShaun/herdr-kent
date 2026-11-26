@@ -138,6 +138,14 @@ node scripts/test-group-sync.js
 node scripts/test-group-sync.js --core
 ```
 
+拖拽相关的一小段只有真鼠标能验：mod 只收真实鼠标事件。给 **Herdr Core** 开辅助功能权限后，`tests/hid-drag.py` 用 HID 级事件真的移动光标、真的按下，再用 `herdr-app shot` 读结果。`scan-edge` 会先把列表滚回顶部，再把一个被拖住的行停在给定的每个 y 上，报告列表行有没有动——这是"贴边自动滚"触发带的回归检查：
+
+```sh
+uv run --with pyobjc-framework-Quartz --with pillow python tests/hid-drag.py scan-edge
+```
+
+它会移动你的真实光标并按下真实按键；坐标和其它选项见脚本头部注释。
+
 两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）。脚本里的 `herdr-app check` 会使用临时隔离的 app home/core session，不会干扰正在运行的默认 Herdr core：
 
 ```sh
