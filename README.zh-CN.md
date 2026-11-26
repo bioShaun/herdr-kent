@@ -10,15 +10,18 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 
 - 可以把 spaces 放入 `设计`、`代码`、`实验` 等命名分组；未归组的 spaces 留在 `default`，一旦使用命名分组，它们会有自己的可折叠标题。
 - 分组按机器隔离；本机和远程机器的 spaces 不会混在一起。
-- 分组标题可以折叠/展开，显示成员数量；折叠后仍会显示 blocked/done 状态。
+- 分组标题可以折叠/展开，显示成员数量；折叠后仍能看出组里在发生什么：working 显示转圈和数量，blocked 显示红色 `!n`，done 显示安静的 `●n`。展开的分组保持安静，组内每一行会说明同样的状态。
+- `Spaces` 旁边的红色 `!n` 是整个窗口的 needs-you 计数：所有机器、所有分组里处于 blocked 的 agents。点一下会跳到第一个。它直接用 Herdr 的状态，所以“看一眼后 done 变成 idle”的语义在这里也一致。
+- `Spaces` 下方的搜索按钮（或命令面板的 **Filter spaces**）可以按 space 名称、机器、git 仓库、分支或文件夹过滤。组名命中时显示整组；计数显示 `命中/总数`；`↑`/`↓` 移动高亮，`Enter` 打开，`Esc` 清空并关闭。过滤只改变画出来的列表，不会改变 Herdr 的真实 space 顺序。
 - space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。名称显示不全时（以及窄栏编号模式下），悬停可以看到完整名称。
 - 名称优先：放得下就保持完整，让 git 尾巴让位；尾巴只剩几个字母时直接不显示。长名称从中间省略，保留更有辨识度的结尾。
 - Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip 和名称 tooltip；space 名后面的细节在只剩残片时干脆不显示。子 agent 和分组的折叠状态会跨重启保留。
 - 某台机器的标题滚出列表后，它的名字会留在 `Spaces` 旁边，滚回去即消失；点一下可以回到该机器的标题。
 - 两个列表的滚动条只在鼠标停留或滚动时出现。
-- 可以直接在分组里新建 space，也可以通过右键菜单放入分组，或直接拖到分组标题上。
+- 可以直接在分组里新建 space，也可以通过右键菜单放入分组，或直接拖到分组标题上。从顶部按钮或分组 `+` 新建时，如果当前 space 就在同一组，新 space 会落在它下面，而不是组尾。
 - 可以在组内排序、在分组之间拖动，也可以移回 `default` 组。
-- 机器折叠/重连、git 信息和窄栏编号来自 Herdr 自带的 `spaces` mod。worktree 嵌套在 `default` 组沿用 Herdr 规则；在命名组里由 Kent 自己画树线，只有当 worktree 紧接在其 main checkout 之后时才会嵌套。
+- 关闭当前 space 后，Kent 会选中列表里它上面最近的一行，而不是 Herdr 自己挑的下一个。关闭的 space 会在所属机器列表底部留下 **Parked** 抽屉：记住文件夹、名称和原分组；点一行会用该文件夹重新打开 space，点 `×` 可以忘掉。文件夹已经开着时不会重复出现。
+- 机器折叠/重连、git 信息和窄栏编号来自 Herdr 自带的 `spaces` mod。worktree 嵌套在 `default` 组沿用 Herdr 规则；在命名组里由 Kent 自己画树线，只有当 worktree 紧接在其 main checkout 之后时才会嵌套。worktree 行用一条安静的竖线/转角线连接，而不是文字符号，既保留 family 关系，也不把图标挤出这一行。
 - 很窄的侧栏下仍然支持紧凑的编号 rail 模式。编号就是该行在列表里的位置，可选快捷键 `ctrl-1` … `ctrl-9` 按这个编号选择。
 
 ## 安装
@@ -100,8 +103,10 @@ herdr-app do layout.switch '{"name":"main"}'
 - 把 space 拖到另一行附近，可以调整顺序。
 - 拖动时把 space 按在列表的上边缘或下边缘附近，列表会朝那个方向滚动，看不见的分组也能拖到。
 - 拖动已分组 space 时，列表底部会出现 `Move to default`，拖到这里可以移出命名分组。
-- 单击分组标题可以折叠或展开；使用标题上的 `+` 可以在该分组里新建 space。
+- 单击分组标题可以折叠或展开；使用标题上的 `+` 可以在该分组里新建 space。如果当前 space 已经在同一组，新行会落在它下面。
 - 右键命名分组标题可以在组内新建 space、重命名、上下移动、折叠/展开或删除分组。删除分组不会关闭其中的 spaces。
+- 用搜索按钮、命令面板的 **Filter spaces** 或 `kent.filter` 命令打开过滤。`↑`/`↓` 移动高亮，`Enter` 打开高亮 space，`Esc` 清空并关闭。数字键和 `alt-up`/`alt-down` 也跟着过滤后的列表走。
+- 关闭 space 后，它会进入所属机器的 **Parked** 区域。点一行会用原文件夹在原来的分组（分组已删除则 `default`）重新打开；点行尾 `×` 可以忘掉。Parked 只保存在当前客户端。
 
 对于 git checkout，space 菜单还会显示 Herdr 的 worktree 操作：`New worktree`、`Open worktree`；linked worktree 还会显示 `Remove worktree`。
 
@@ -117,6 +122,9 @@ Kent 不再写死亮色或暗色主题。它会跟随 `settings.json`、系统�
 - 窗口里的修改会先即时显示，再异步写入 core document；写入使用版本号 CAS。发生并发冲突时会重新读取最新文档并把本次操作意图重新应用上去，而不是直接覆盖另一个客户端的修改。窗口可见时 Kent 大约每 3 秒轮询一次，因此其他客户端的修改可能需要几秒才会出现。
 - 如果机器离线，或它的 core 太旧、不支持 document 存储，Kent 会退回到原来的客户端本地行为，并把修改保存在本地队列里。队列会跨 app 重启保留，并在机器/core 可用后重试；在同步成功前，这些修改对其他客户端不可见。
 - 旧的客户端本地分组会在首次连接时迁移到对应机器的 document。由于旧数据没有跨客户端稳定身份，同名旧分组会被合并；machine document 中已有的成员关系优先。如果多台客户端以前的分组已经分叉，第一次同步迁移后建议检查重要分组。
+- Parked 是客户端本地的抽屉（`kent.projects.v1`，每台机器最多 50 条），只记文件夹、显示名和原分组，不保存 tabs、scrollback 或原进程；它不同步，所以另一台客户端有自己的抽屉。重新打开文件夹会新建 space，而不是恢复旧会话。
+- 折叠分组的计数和 needs-you 徽标依赖 Herdr 的 `done`/`idle` 与 space 状态。Kent 不自建未读表：任意 Herdr 客户端看一眼，完成状态就会变成 `idle`，计数随之减少。
+- 过滤只是视图，不是重排。它不会把过滤后的子集交给 `ordered()`/`space.move`；清空查询后，完整列表按原来的分组顺序回来。
 - 命名组内排序由 Kent 管理；`default` 组里的 spaces 仍使用 Herdr 自己的排序。
 - Kent 是基于 Herdr 0.1.18 开发和测试的。跨客户端分组同步需要支持 machine-scoped document 的 herdr-core（已用 0.1.22 验证）；较旧 core 会使用客户端本地 fallback。
 - 可见边界数据目前覆盖 Herdr 0.1.18 自带的 SVG icon；未来 Herdr 新增 icon 后可以用 `scripts/generate-icon-metrics.py` 重新生成。未知自定义 icon 仍会退回方形适配。

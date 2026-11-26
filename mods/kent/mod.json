@@ -3,6 +3,8 @@
   "title": "Kent spaces",
   "palette": [
     { "title": "New space group", "command": "kent.new-group", "words": "spaces folders organize labels" },
-    { "title": "Group active space", "command": "kent.menu", "words": "spaces folders organize labels assign" }
+    { "title": "Group active space", "command": "kent.menu", "words": "spaces folders organize labels assign" },
+    { "title": "Filter spaces", "command": "kent.filter", "words": "spaces find search filter" },
+    { "title": "New space here", "command": "kent.new-space", "words": "spaces create add active group" }
   ]
 }

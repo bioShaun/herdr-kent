@@ -2,6 +2,18 @@
 
 > **状态（2026-11-26）：以下 S-1 … S-8 均已在代码中实现（S-2 的本机就绪判断在随后的审查中修正）。本文保留为这轮审查的设计记录，不再是待办清单；当前行为以 `README.md` / `RECIPE.md` 为准。**
 
+## 2026-11-26 社区调研 P1 实现记录
+
+这一轮按《Herdr 社区布局调研：Kent 该补的四件事》先落地 P1，不改动既有的跨客户端分组同步模型（CAS、冲突重放、离线队列）：
+
+- **折叠组计数与全局 needs-you。** 折叠组头显示 working 数量（转圈）、红色 `!n` blocked、`●n` done；展开时保持安静。`Spaces` 标题旁显示全局 blocked agent 计数，点一下跳到第一个。数据全部来自 Herdr 的 `space.status` / `agents()`，Kent 不自建 done 已读表。
+- **新建落位与关闭回落。** 顶部 New space 使用当前 space 所在分组；组头 `+` 在当前 space 属于同组时传入 `afterId`，创建后插到它下面。关闭当前 space 后，在机器 ready 的前提下选中列表里它上面最近的一行；机器离线/loading 不误判为关闭。
+- **过滤与键盘导航。** 搜索按钮、palette **Filter spaces**、`kent.filter` 打开 30px 过滤框；匹配 space 名、机器、repo、branch、folder；组名命中显示整组；`↑`/`↓`/`Enter`/`Esc` 可用。过滤发生在 `ordered()` 之后，过滤子集不会传给 `space.move`。
+- **Parked 项目。** 关闭 space 时按机器记录 `{folder, name, group, at}` 到客户端本地 `kent.projects.v1`（上限 50）；机器列表末尾显示可折叠 Parked 区，点击用 `space.new {folder, name}` 重开，`×` 忘掉；同一 folder 仍开着时不显示，Parked 行不进入 `seen`。
+- **worktree 树线。** 组内 worktree 行增加绝对定位的竖线/转角线，替代文字树符，保留原有“只有同组内连续相邻才嵌套”的规则。
+
+P2 的 Archive、组色/起始目录、Collect from 规则与 worktree 折叠/未打开 repo 头，以及 P3 的拖拽阈值/抬升动画，本轮未并入；`README.md` 的 Notes 记录了当前边界。
+
 ## 优先级总览
 
 | 编号 | 主题 | 优先级 | 推荐结论 | 涉及文件 |

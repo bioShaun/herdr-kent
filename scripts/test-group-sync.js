@@ -28,6 +28,7 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
     enqueueGroupOp, restorePendingGroupOps, coreRpc, docGet, docSet,
     rebuildOptimistic, adoptRemote, processGroupOp, pruneMachineData,
     pendingGroupOps, clearPendingGroupOp, startGroupSync, stopGroupSync, groupSync, Spaces,
+    readProjects, projectEntries, rememberProject, forgetProject, projectKeyOf, normPath,
   };`;
 
   const localStorage = {
@@ -571,6 +572,40 @@ async function testRealCoreRpc() {
   }
 }
 
+function testFilterAndParkedStore() {
+  const { kent } = loadKent();
+  const methods = kent.Spaces.prototype;
+  const ctx = {
+    filtering: true,
+    filterText: ' code ',
+    filterActive: methods.filterActive,
+    rowMatches: methods.rowMatches,
+    groupMatches: methods.groupMatches,
+    projectMatches: methods.projectMatches,
+  };
+  assert.equal(ctx.filterActive(), true);
+  assert.equal(ctx.rowMatches({ w: { name: 'Code editor', machine: null }, g: { repo: 'kent', branch: 'main' } }), true);
+  assert.equal(ctx.rowMatches({ w: { name: 'Scratch', machine: null }, g: { repo: 'notes', branch: 'dev' } }), false);
+  assert.equal(ctx.rowMatches({ w: { name: 'Remote', machine: '4090' }, g: null }), false);
+  assert.equal(ctx.groupMatches({ name: 'Code tools' }), true);
+  assert.equal(ctx.groupMatches({ name: 'Design' }), false);
+
+  kent.rememberProject({ machine: 'm', folder: '/tmp/one/', name: 'One', named: true, group: 'g' });
+  kent.rememberProject({ machine: 'm', folder: '/tmp/one', name: 'One again', named: true, group: 'g2' });
+  const entries = kent.projectEntries('m');
+  assert.equal(entries.length, 1, 'trailing slash is the same folder');
+  assert.equal(entries[0].name, 'One again');
+  assert.equal(entries[0].group, 'g2');
+  assert.equal(kent.forgetProject('m', '/tmp/one/'), true);
+  assert.equal(kent.projectEntries('m').length, 0);
+
+  for (let i = 0; i < 55; i += 1) kent.rememberProject({ machine: null, folder: `/tmp/p${i}`, name: `p${i}` });
+  assert.equal(kent.projectEntries(null).length, 50, 'the drawer is capped');
+
+  assert.equal(kent.projectKeyOf('m', '/tmp/one/'), kent.projectKeyOf('m', '/tmp/one'));
+  assert.equal(kent.normPath('/tmp/one//'), '/tmp/one');
+}
+
 (async () => {
   await testCanonical();
   await testUnicodeRpc();
@@ -591,6 +626,7 @@ async function testRealCoreRpc() {
   await testUnsupportedCoreIsDetected();
   await testMachineIsolation();
   testSyncWorkerAdoption();
+  testFilterAndParkedStore();
   await testFoldRenameDeleteIntents();
   await testUnavailableStaysQueued();
   console.log('group sync harness checks passed');
