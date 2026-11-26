@@ -1463,14 +1463,16 @@ export default class Spaces extends View {
     else if (m.drop) this.assignToGroup(from, null);
   }
 
-  // The pointer moved while a row is dragged. Event positions are window pixels: put
-  // them in the list's own, the ones scroll.offset() counts. Held near an edge, the
-  // list scrolls that way for as long as the row stays there (see runEdge).
+  // The pointer moved while a row is dragged. Event positions count from the list's
+  // own top, the one scroll.offset() counts. Held near an edge, the list scrolls that
+  // way for as long as the row stays there (see runEdge).
   edgeFollow(e, cx) {
     if (this.pressed === null || e.pressed_button !== "left" || !e.local_position || !e.bounds) return;
     const zoom = Number(settings().zoom) || 1;
     const y = e.local_position.y / zoom;
-    const height = e.bounds.height / zoom;
+    // The viewport, not the element's box: another block can share the column below and
+    // the box runs on behind it, which put the bottom edge past the rows you can see.
+    const height = this.scroll ? this.scroll.viewport_size().height : e.bounds.height / zoom;
     this.pointer = { x: e.local_position.x / zoom, y, w: e.bounds.width / zoom, h: height };
     const dir = y >= -EDGE && y < EDGE ? -1 : y <= height + EDGE && y > height - EDGE ? 1 : 0;
     if (dir === this.edgeDir) return;
