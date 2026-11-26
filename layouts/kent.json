@@ -2,7 +2,7 @@
   "id": "root",
   "type": "row",
   "titlebar": "none",
-  "preview": "layouts/kent.png",
+  "preview": "layouts/kent.svg",
   "traffic_lights": [
     12,
     16
@@ -22,7 +22,7 @@
       "id": "sidebar",
       "type": "column",
       "size": {
-        "px": 232
+        "px": 268
       },
       "min": 44,
       "max": 480,

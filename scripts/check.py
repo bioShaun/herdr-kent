@@ -3,15 +3,14 @@
 
 Herdr installs each mod from its own directory, so both mods keep their own
 copy of icon-chip.js and icon-metrics.js. icon-metrics.js is regenerated into
-both places at once; icon-chip.js is maintained by hand and can drift. The
-settings-picker thumbnail layouts/kent.png is likewise a copy of preview.png.
-This script fails when the pairs differ, validates the JSON files, and runs
+both places at once; icon-chip.js is maintained by hand and can drift. This
+script fails when the pairs differ, validates the JSON files, and runs
 `herdr-app check` on both mods when the binary is available.
 
 Run from anywhere with:
 
     python3 scripts/check.py           # verify
-    python3 scripts/check.py --sync    # copy mods/kent/icon-chip.js over the kent-agents one, and preview.png over layouts/kent.png
+    python3 scripts/check.py --sync    # copy mods/kent/icon-chip.js over the kent-agents one
 """
 
 from pathlib import Path
@@ -27,7 +26,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PAIRS = [
     ("icon-chip.js", ROOT / "mods" / "kent" / "icon-chip.js", ROOT / "mods" / "kent-agents" / "icon-chip.js"),
     ("icon-metrics.js", ROOT / "mods" / "kent" / "icon-metrics.js", ROOT / "mods" / "kent-agents" / "icon-metrics.js"),
-    ("preview.png", ROOT / "preview.png", ROOT / "layouts" / "kent.png"),
 ]
 JSON_FILES = [
     ROOT / "layouts" / "kent.json",
@@ -93,16 +91,16 @@ def check_mods():
 
 def sync():
     for name, source, copy in PAIRS:
-        if name == "icon-metrics.js":
-            continue  # regenerated into both mods by generate-icon-metrics.py
+        if name != "icon-chip.js":
+            continue
         shutil.copy2(source, copy)
-        print(f"check: copied {source.relative_to(ROOT)} to {copy.relative_to(ROOT)}")
+        print(f"check: copied mods/kent/{name} to mods/kent-agents/{name}")
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description="Check the duplicated mod files are in sync.")
-    parser.add_argument("--sync", action="store_true", help="copy mods/kent/icon-chip.js over the kent-agents copy and preview.png over layouts/kent.png")
+    parser.add_argument("--sync", action="store_true", help="copy mods/kent/icon-chip.js over the kent-agents copy")
     parser.add_argument("--no-herdr", action="store_true", help="skip the herdr-app check runs")
     args = parser.parse_args()
     if args.sync:

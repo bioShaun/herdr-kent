@@ -28,7 +28,7 @@ WIDTH = 1440
 HEIGHT = 900
 SHARED_DEFAULTS = {
     "layout": "kent",
-    "sidebar.width": 232,
+    "sidebar.width": 268,
     "sidebar.collapsed": False,
     "frame.welcomed": "finished",
     "agents.sort": "priority",
@@ -237,8 +237,8 @@ def prepare_home(tmp, font):
     (app_home / "layouts").mkdir(parents=True, exist_ok=True)
     (app_home / "mods").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "layouts" / "kent.json", app_home / "layouts" / "kent.json")
-    if (ROOT / "layouts" / "kent.png").exists():
-        shutil.copy2(ROOT / "layouts" / "kent.png", app_home / "layouts" / "kent.png")
+    if (ROOT / "layouts" / "kent.svg").exists():
+        shutil.copy2(ROOT / "layouts" / "kent.svg", app_home / "layouts" / "kent.svg")
     for mod in ("kent", "kent-agents"):
         shutil.copytree(ROOT / "mods" / mod, app_home / "mods" / mod)
     if (ROOT / "keys.json").exists():
@@ -570,10 +570,6 @@ def generate(output, keep=False, font="JetBrainsMono Nerd Font Mono"):
         capture_shot(env, frame)
         details = normalize_png(frame, output)
         print(f"wrote {output} ({details})")
-        # The settings-picker thumbnail is the same picture; keep the pair in sync.
-        if output.resolve() == (ROOT / "preview.png").resolve():
-            shutil.copy2(output, ROOT / "layouts" / "kent.png")
-            print(f"wrote {ROOT / 'layouts' / 'kent.png'} (settings thumbnail)")
     finally:
         stop_app(process, log)
         stop_core(env)

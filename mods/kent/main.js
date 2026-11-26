@@ -4,7 +4,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, closeOverlay, props, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, checking } from "herdr";
+import { spaces, machines, panes, run, openOverlay, closeOverlay, props, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, checking, settings } from "herdr";
 import { iconChip } from "./icon-chip.js";
 
 function find(node, id) {
@@ -27,9 +27,24 @@ function place(s, ps) {
 }
 const rowHeight = ({ tree }) => (tree ? 26 : 28);
 const RAIL_CELL = 32;
-// A space's name and its git tail never shrink below this, so a short one ("api")
-// stays readable instead of turning into an ellipsis next to a long branch.
+// A space's name never shrinks below this, so a short one ("api") stays readable
+// instead of turning into an ellipsis next to a long branch.
 const SIDE_MIN = 48;
+// A row can only show part of a long name, and the numbered rail shows none
+// of it: the tooltip says the whole name, and the machine when it isn't this one.
+const nameTip = (w) => (w.machine ? `${w.machine} · ${w.name}` : w.name);
+// Only a name this long is cut in the middle: a long one often tells spaces apart by its
+// end ("…-HYJ397"), which an ellipsis at the end takes away with the rest.
+const LONG_NAME = 16;
+// How close to the list's top or bottom edge a dragged row is held for the list to scroll
+// that way, so a group out of sight can be dropped on. In the list's own pixels.
+const EDGE = 28;
+// A git tail narrower than this (about eight characters) is not drawn: a stub of a repo or
+// branch name next to a full name reads as noise.
+const TAIL_MIN = 56;
+// What a list child takes up from the top of the list: `h`, as each says when it is made
+// (the same pixels as scroll.offset()), a row's height until it says.
+const ofItem = (m) => m?.h ?? 28;
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
@@ -1079,6 +1094,10 @@ export default class Spaces extends View {
     this.overUngroup = false;
     this.positionOf = {};
     this.seen = [];
+    this.listItems = []; // what each child of the list shows, in order (see grouped)
+    this.caption = null; // { machine, head }: the rows in view belong to a machine whose header has left the list
+    this.pointer = null; // where the pointer is in the list, while a row is dragged
+    this.edgeDir = 0; // -1, 0 or 1: the edge a dragged row is held at
     this.scroll = ScrollHandle.new(); // the list's position: the active space is brought into view through it
     this.activeAt = -1; // the active space's place among the list's children (headers and rows), -1 when not drawn
     this.machines = [];
@@ -1099,6 +1118,7 @@ export default class Spaces extends View {
         for (;;) {
           const c = String(await nextCommand()).split(".").pop();
           if (c === "next" || c === "prev") this.step(c === "next" ? 1 : -1);
+          else if (/^select[1-9]$/.test(c)) this.selectSeen(Number(c.slice(6)));
           else if (c === "menu") {
             const active = spaces().find((space) => space.active);
             if (active) this.menu(active, "dialog");
@@ -1131,6 +1151,67 @@ export default class Spaces extends View {
     if (next) run("space.select", { id: next });
   }
 
+  // kent.select1 … kent.select9 (ctrl-1 … ctrl-9): the Nth row as the sidebar shows it,
+  // the number the rail prints, where Herdr's own space.select goes by its inner order.
+  selectSeen(n) {
+    const id = (this.seen ?? [])[n - 1];
+    if (id) run("space.select", { id });
+  }
+
+  // The machine named by "Spaces" while the list shows a machine's rows without its
+  // header. Checked after every scroll and now and then between, as a fold or a new
+  // row moves the list without one.
+  syncCaption(cx) {
+    const next = this.captionFor();
+    const now = this.caption;
+    if (next?.machine === now?.machine && next?.head === now?.head) return;
+    this.caption = next;
+    cx.notify();
+  }
+
+  // A scroll has just been asked for: look once it has happened, however many came at once.
+  soonCaption(cx) {
+    if (this.captionSoon) return;
+    this.captionSoon = true;
+    cx.timer.after(50, (cx) => { this.captionSoon = false; this.syncCaption(cx); });
+  }
+
+  // The first child the top of the list shows, and the machine header above it. The
+  // header is gone when its bottom is above the list's top; a header partly in view,
+  // or one that is itself the first child shown, leaves the name to it.
+  captionFor() {
+    const items = this.listItems ?? [];
+    if (!this.scroll) return null;
+    const offset = this.scroll.offset().y;
+    let top = 0;
+    let headAt = -1;
+    let headBottom = 0;
+    for (const [n, m] of items.entries()) {
+      const bottom = top + ofItem(m);
+      if (m.machineHead) { headAt = n; headBottom = bottom; }
+      if (bottom > offset) {
+        const hidden = headAt >= 0 && headBottom <= offset + 2 && (items[headAt].machine ?? null) === (m.machine ?? null);
+        return hidden ? { machine: m.machine ?? null, head: headAt } : null;
+      }
+      top = bottom;
+    }
+    return null;
+  }
+
+  // The list child under the pointer, last seen while a row was dragged. Only inside
+  // the list: its side gutters, past its ends, or over another mod is nobody's target.
+  under() {
+    const p = this.pointer;
+    if (!p || !this.scroll || p.x < 8 || p.x > p.w - 8 || p.y < 0 || p.y > p.h) return null;
+    const at = this.scroll.offset().y + p.y;
+    let top = 0;
+    for (const m of this.listItems ?? []) {
+      top += ofItem(m);
+      if (top > at) return m;
+    }
+    return null;
+  }
+
   checkNew(cx) {
     startGroupSync(cx);
     const now = Date.now();
@@ -1145,6 +1226,7 @@ export default class Spaces extends View {
       this.pruneStoreData();
     }
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
+    this.syncCaption(cx);
   }
 
   // Places whose git could have changed: new ones (a new space, a cd), where a
@@ -1342,6 +1424,140 @@ export default class Spaces extends View {
     this.overGroup = null;
     this.overGroupMachine = null;
     this.overUngroup = false;
+    // The edge loop stops on this; the next drag decides its own edge from zero.
+    this.edgeDir = 0;
+  }
+
+  // A dragged row let go with the row `target` under the pointer: it goes into target's
+  // group, before or after it, and in the default group is also re-sorted in Herdr's
+  // own order (where before-or-after means something).
+  dropOn(from, target) {
+    const spNow = spaces();
+    const source = spNow.find(s => s.id === from);
+    if (!source) return;
+    const sourceGroup = this.groupOf(from, source.machine ?? null);
+    const targetGroup = this.groupOf(target, source.machine ?? null);
+    const fromIdx = spNow.findIndex(s => s.id === from);
+    const targetIdx = spNow.findIndex(s => s.id === target);
+    const after = (this.positionOf[from] ?? fromIdx) < (this.positionOf[target] ?? targetIdx);
+    const moveInDefault = () => {
+      if (fromIdx === -1 || targetIdx === -1) return;
+      const adj = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+      const dest = adj + (after ? 2 : 1);
+      if (dest !== fromIdx + 1) run("space.move", { id: from, index: dest });
+    };
+    if (targetGroup !== null || sourceGroup !== null) {
+      this.assignToGroup(from, targetGroup, target, after);
+      if (targetGroup === null) moveInDefault();
+    } else moveInDefault();
+  }
+
+  // What letting go over the list child `m` means. A row takes the dragged one before or
+  // after itself; a group's header into its group; "Move to default" out of every group.
+  // A machine's own header, a loading row, or anything on another machine takes nothing.
+  dropOnItem(from, m) {
+    const source = spaces().find(s => s.id === from);
+    if (!source || !m || (m.machine ?? null) !== (source.machine ?? null)) return;
+    if (m.id) { if (m.id !== from) this.dropOn(from, m.id); }
+    else if (m.groupHead) { this.groupDropAt = Date.now(); this.assignToGroup(from, m.virtual ? null : m.group); }
+    else if (m.drop) this.assignToGroup(from, null);
+  }
+
+  // The pointer moved while a row is dragged. Event positions are window pixels: put
+  // them in the list's own, the ones scroll.offset() counts. Held near an edge, the
+  // list scrolls that way for as long as the row stays there (see runEdge).
+  edgeFollow(e, cx) {
+    if (this.pressed === null || e.pressed_button !== "left" || !e.local_position || !e.bounds) return;
+    const zoom = Number(settings().zoom) || 1;
+    const y = e.local_position.y / zoom;
+    const height = e.bounds.height / zoom;
+    this.pointer = { x: e.local_position.x / zoom, y, w: e.bounds.width / zoom, h: height };
+    const dir = y >= -EDGE && y < EDGE ? -1 : y <= height + EDGE && y > height - EDGE ? 1 : 0;
+    if (dir === this.edgeDir) return;
+    this.edgeDir = dir;
+    if (dir) { if (!this.edgeTask) this.runEdge(cx); }
+    // Off the edge: the row under the pointer may have changed since the list last moved.
+    else cx.timer.after(60, (cx) => { if (this.retarget()) cx.notify(); });
+  }
+
+  // One child past the edge every 90ms, until the pointer leaves the edge, the row is
+  // let go, or the list has no more that way.
+  runEdge(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        while (this.edgeDir && this.pressed !== null) {
+          await cx.sleep(90);
+          if (!this.edgeDir || this.pressed === null) break;
+          if (this.retarget()) cx.notify();
+          if (!this.scrollEdge(this.edgeDir)) await cx.sleep(250);
+        }
+      } finally { this.edgeTask = false; }
+    });
+    this.edgeTask = true;
+  }
+
+  // Scroll the first child hidden past the `dir` edge into view. False at the list's end.
+  scrollEdge(dir) {
+    if (!this.scroll) return false;
+    const offset = this.scroll.offset().y;
+    const view = this.scroll.viewport_size().height;
+    let top = 0;
+    let first = -1;
+    let last = -1;
+    let n = 0;
+    for (const m of this.listItems ?? []) {
+      const bottom = top + ofItem(m);
+      if (first === -1 && bottom > offset) first = n;
+      if (top < offset + view) last = n;
+      top = bottom;
+      n += 1;
+    }
+    const target = dir < 0 ? first - 1 : last + 1;
+    if (target < 0 || target >= n) return false;
+    this.scroll.scroll_to_item(target);
+    return true;
+  }
+
+  // The list moved under a pointer that didn't: say which row is under it now, as a
+  // move over that row would have. True when that changed the drop target.
+  retarget() {
+    if (this.pressed === null) return false;
+    const m = this.under();
+    const source = spaces().find(s => s.id === this.pressed);
+    const mine = Boolean(source && m && (m.machine ?? null) === (source.machine ?? null));
+    const over = mine && m.id ? m.id : null;
+    const overGroup = mine && m.groupHead && over === null ? m.group : null;
+    const overGroupMachine = overGroup === null ? null : (m.machine ?? null);
+    const overUngroup = Boolean(mine && m.drop);
+    if (this.over === over && this.overGroup === overGroup && this.overGroupMachine === overGroupMachine && this.overUngroup === overUngroup) return false;
+    this.over = over;
+    this.overGroup = overGroup;
+    this.overGroupMachine = overGroupMachine;
+    this.overUngroup = overUngroup;
+    return true;
+  }
+
+  // Beside "Spaces" while the rows in view belong to a machine whose header has left
+  // the list; a click brings that header back.
+  machineTag(t) {
+    const m = this.caption?.machine ?? null;
+    return h_flex()
+      .h(20)
+      .flex_none()
+      .max_w(132)
+      .px(6)
+      .gap(5)
+      .items_center()
+      .rounded(5)
+      .bg(t.raised)
+      .text_size(11)
+      .text_color(t.muted)
+      .cursor_pointer()
+      .hover(s => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(`The rows in view are on ${m ?? "this computer"}. Click for its header.`)
+      .on_click(() => this.scroll.scroll_to_item(this.caption?.head ?? 0))
+      .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(11).flex_none())
+      .child(div().min_w(0).truncate().font_semibold().child(m ?? "This computer"));
   }
 
   groupsFor(machine, data = readStore()) {
@@ -1671,16 +1887,22 @@ export default class Spaces extends View {
     return members.map((r, n) => ({ ...r, tree: trees[n] }));
   }
 
-  machineRows(machine, mine, draw, t, collapsed, data) {
+  // `base` is how many visible rows the machines above have: a row's `base + its place`
+  // is the number the rail prints and the one ctrl-N goes by. `meta` says what each
+  // returned child shows and how tall it is (see ofItem).
+  machineRows(machine, mine, draw, t, collapsed, data, base = 0) {
     const positions = new Map();
     const visible = [];
+    const meta = [];
     if (collapsed) {
-      mine.forEach((r, i) => {
+      const items = mine.map((r, i) => {
         positions.set(r.w.id, i);
         this.positionOf[r.w.id] = i;
         visible.push(r.w.id);
+        meta.push({ id: r.w.id, machine, h: 26 });
+        return draw({ ...r, group: null }, base + i);
       });
-      return { items: mine.map((r) => draw({ ...r, group: null })), positions, visible };
+      return { items, positions, visible, meta };
     }
     const rowById = new Map(mine.map((r) => [r.w.id, r]));
     const groups = data.groups.filter((g) => (g.machine ?? null) === (machine ?? null));
@@ -1702,7 +1924,7 @@ export default class Spaces extends View {
         positions.set(r.w.id, at);
         this.positionOf[r.w.id] = at;
         visible.push(r.w.id);
-        entries.push({ kind: "row", r, group: g.id });
+        entries.push({ kind: "row", r, group: g.id, n: base + visible.length - 1 });
         at += 1;
       }
     }
@@ -1718,15 +1940,22 @@ export default class Spaces extends View {
           positions.set(r.w.id, at);
           this.positionOf[r.w.id] = at;
           visible.push(r.w.id);
-          entries.push({ kind: "row", r, group: null });
+          entries.push({ kind: "row", r, group: null, n: base + visible.length - 1 });
           at += 1;
         }
       }
     }
-    const items = entries.map((entry) =>
-      entry.kind === "head" ? this.groupHead(entry.g, entry.members, machine, t) : draw({ ...entry.r, group: entry.group }),
-    );
-    return { items, positions, visible };
+    const items = [];
+    for (const entry of entries) {
+      if (entry.kind === "head") {
+        items.push(this.groupHead(entry.g, entry.members, machine, t));
+        meta.push({ groupHead: true, group: entry.g.id, virtual: Boolean(entry.g.virtual), machine, h: 30 });
+      } else {
+        items.push(draw({ ...entry.r, group: entry.group }, entry.n));
+        meta.push({ id: entry.r.w.id, group: entry.group, machine, h: rowHeight(entry.r) });
+      }
+    }
+    return { items, positions, visible, meta };
   }
 
   groupHead(g, members, machine, t) {
@@ -1842,16 +2071,19 @@ export default class Spaces extends View {
       .child("Move to default");
   }
 
-  // The rows, under a header per machine once one isn't this computer.
+  // The rows, under a header per machine once one isn't this computer. Returns the list's
+  // children as [element, what it shows and how tall it is], in order.
   grouped(t, collapsed, sp, ps, ms, store, tabPanes) {
     const rows = this.ordered(sp, ps, ms, store);
-    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t, sp, tabPanes));
+    // `n`: the row's number among the visible ones (the rail prints it, ctrl-N goes by it).
+    const draw = (r, n) => (collapsed ? this.compact(r, t, n) : this.row(r, t, sp, tabPanes));
     this.seen = [];
     this.positionOf = {};
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
-    let before = 0;
+    let before = 0; // children above this machine's
+    let base = 0; // visible rows above this machine's
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
     const loading = m => {
       const layout = ms.find(k => k.name === m)?.layout;
@@ -1860,15 +2092,15 @@ export default class Spaces extends View {
     };
     const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     if (!remote.length) {
-      if (loading(null) && !rows.length) return [loadingRow(null)];
+      if (loading(null) && !rows.length) return [[loadingRow(null), { machine: null, h: 28 }]];
       const packed = this.machineRows(null, rows, draw, t, collapsed, store);
       this.seen.push(...packed.visible);
       const active = rows.find((r) => r.w.active)?.w.id;
       this.activeAt = active ? packed.positions.get(active) ?? -1 : -1;
-      return packed.items;
+      return packed.items.map((el, n) => [el, packed.meta[n]]);
     }
-    const machineNames = [null, ...remote];
-    return machineNames.flatMap((m, machineIndex) => {
+    const out = [];
+    for (const [machineIndex, m] of [null, ...remote].entries()) {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const repair = this.reconnecting[m];
       const machine = this.machines.find(k => k.name === m) ?? repair?.machine;
@@ -1918,7 +2150,11 @@ export default class Spaces extends View {
           .child(h_flex().size(18).rounded(5).border_1().border_color(t.dim).items_center().justify_center()
             .child(svg("mods/workspace-chrome/plus.svg").size(10))))
         .when(!collapsed, el => el.child(svg("mods/workspace-chrome/plus.svg").size(12)).child("New space there"));
-      if (!collapsed && rebuilt) { before += 1; return [head]; }
+      if (!collapsed && rebuilt) {
+        before += 1;
+        out.push([head, { machineHead: true, machine: m, h: 26 + (machineIndex > 0 ? 6 : 0) }]);
+        continue;
+      }
       const cell = collapsed ? railCell : (el) => el;
       const guidance = !collapsed && login ? [v_flex().px(8).pb(6).gap(3).flex_none()
         .child(div().text_size(11).text_color(t.blocked).child("needs a login: run"))
@@ -1928,18 +2164,23 @@ export default class Spaces extends View {
             .text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover(s => s.bg(t.hover))
             .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(login); this.copiedLogin = login; cx.notify(); })
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
-      const packed = folded ? null : this.machineRows(m, mine, draw, t, collapsed, store);
-      const content = !packed ? [] : packed.items.length ? packed.items : [loading(m) ? loadingRow(m) : cell(empty)];
-      const items = [cell(head), ...guidance, ...content];
+      const packed = folded ? null : this.machineRows(m, mine, draw, t, collapsed, store, base);
+      // A login note is two lines: its height here is an estimate.
+      const content = !packed ? []
+        : packed.items.length ? packed.items.map((el, n) => [el, packed.meta[n]])
+        : [[loading(m) ? loadingRow(m) : cell(empty), { machine: m, h: 28 }]];
+      const items = [[cell(head), { machineHead: true, machine: m, h: 26 + (collapsed ? 4 : machineIndex > 0 ? 6 : 0) }], ...guidance.map((el) => [el, { machine: m, h: 46 }]), ...content];
       if (packed) {
         this.seen.push(...packed.visible);
+        base += packed.visible.length;
         const active = mine.find((r) => r.w.active)?.w.id;
         const position = active ? packed.positions.get(active) : undefined;
         if (position !== undefined) this.activeAt = before + 1 + guidance.length + position;
       }
       before += items.length;
-      return items;
-    });
+      out.push(...items);
+    }
+    return out;
   }
 
   menuItems() {
@@ -2112,8 +2353,11 @@ export default class Spaces extends View {
 
   // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
   // branch goes when the name already says it (a worktree is named after its branch),
-  // and master/main go: nearly every space is on one. When the row is full, it
-  // and the name both start from their text's width and give way in proportion.
+  // and master/main go: nearly every space is on one.
+  // The name comes first. The tail is laid out from what the name leaves, not from its
+  // own text's width (which had the two give way in proportion, and a long branch cut
+  // the name); when that is nearly nothing the \u2191\u2193 stay and the text goes. The text
+  // is not even started when only a few letters of it would fit: "br\u2026" says nothing.
   gitTail(g, tree, name, t) {
     const raw = g.branch ?? "detached";
     const fullName = name.toLowerCase();
@@ -2125,10 +2369,15 @@ export default class Spaces extends View {
     };
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
-    const where = [repo, branch].filter(Boolean).join(" \u00b7 ");
+    // An estimate, in the sidebar's pixels: what the row takes up around the two (83), a
+    // tree row's indent and branch (43), the name (a 13px monospace character is 7.8 wide)
+    // and the gap after it. Less than TAIL_MIN left, and the text is left out.
+    const room = (this.sidePx ?? 268) - 83 - (tree ? 43 : 0) - name.length * 7.8 - 8;
+    const where = room < TAIL_MIN ? "" : [repo, branch].filter(Boolean).join(" \u00b7 ");
+    const marks = [g.ahead > 0 ? `\u2191${g.ahead}` : "", g.behind > 0 ? `\u2193${g.behind}` : ""].filter(Boolean);
     return h_flex()
-      .flex_auto()
-      .min_w(where ? SIDE_MIN : 0)
+      .flex_1()
+      .min_w(marks.reduce((sum, mark) => sum + mark.length * 7 + 1, 0) + (marks.length > 1 ? 5 : 0))
       .gap(5)
       .justify_end()
       .items_center()
@@ -2194,25 +2443,10 @@ export default class Spaces extends View {
         if (this.pressed === null) return;
         const from = this.pressed;
         const over = this.over;
-        const spNow = spaces();
-        const source = spNow.find(s => s.id === from);
-        const sourceGroup = source ? this.groupOf(from, source.machine ?? null) : null;
-        const after = fromPosition < targetPosition;
+        const click = from === w.id;
         this.clearDrag();
-        if (over === w.id && from !== w.id) {
-          const fromIdx = spNow.findIndex(s => s.id === from);
-          const targetIdx = spNow.findIndex(s => s.id === w.id);
-          const moveInDefault = () => {
-            if (fromIdx === -1 || targetIdx === -1) return;
-            const adj = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
-            const dest = adj + (after ? 2 : 1);
-            if (dest !== fromIdx + 1) run("space.move", { id: from, index: dest });
-          };
-          if (targetGroup !== null || sourceGroup !== null) {
-            this.assignToGroup(from, targetGroup, w.id, after);
-            if (targetGroup === null) moveInDefault();
-          } else moveInDefault();
-        } else if (from === w.id) run("space.select", { id: w.id });
+        if (click) run("space.select", { id: w.id });
+        else if (over === w.id) this.dropOn(from, w.id);
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
@@ -2222,13 +2456,18 @@ export default class Spaces extends View {
           .items_center()
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim)))
           .when(!tree, el => el.child(programIcon(pane?.program, t)))
-          .child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(on ? t.foreground : t.muted).child(w.name))
+          // The name keeps its width while it fits: the tail is what narrows (see gitTail).
+          // Cut only when it can't: at the end, or in the middle for a long one (LONG_NAME).
+          .child(div().flex_initial().min_w(SIDE_MIN).truncate()
+            .when(w.name.length > LONG_NAME, (el) => el.text_ellipsis_middle())
+            .text_color(on ? t.foreground : t.muted).tooltip(nameTip(w)).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .when(w.status === "blocked" || w.status === "done", el => el.child(div().size(7).rounded(4).flex_none().bg(t[w.status]))),
       );
   }
 
-  compact({ w, i }, t) {
+  // A rail cell: the row's number (its place among the visible rows) and its state.
+  compact({ w }, t, n) {
     return railCell(h_flex()
       .id(`space-${w.id}`)
       .relative()
@@ -2240,7 +2479,8 @@ export default class Spaces extends View {
       .when(w.active, (el) => el.bg(t.selected))
       .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click(() => run("space.select", { id: w.id }))
-      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
+      .tooltip(nameTip(w))
+      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(n + 1)))
       .child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }
 
@@ -2249,15 +2489,21 @@ export default class Spaces extends View {
     if (this.prompt) return this.renderPrompt();
     const t = theme();
     const collapsed = narrow();
+    this.sidePx = find(layout(), "sidebar")?.size?.px ?? 268;
     const sp = spaces();
     const ps = panes();
     const ms = machines();
     const store = readStore();
     const tabPanes = panesByTab(ps);
-    const list = this.grouped(t, collapsed, sp, ps, ms, store, tabPanes);
+    const flat = this.grouped(t, collapsed, sp, ps, ms, store, tabPanes);
+    const list = flat.map(([el]) => el);
+    this.listItems = flat.map(([, m]) => m);
     if (this.pressed !== null && !collapsed) {
       const drop = this.ungroupDrop(t, sp, store);
-      if (drop) list.push(drop);
+      if (drop) {
+        list.push(drop);
+        this.listItems.push({ drop: true, machine: sp.find((s) => s.id === this.pressed)?.machine ?? null, h: 38 });
+      }
     }
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
     const active = sp.find(p => p.active)?.id;
@@ -2269,7 +2515,12 @@ export default class Spaces extends View {
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .on_mouse_up("left", (_e, cx) => {
         if (this.pressed === null) return;
+        // Not over a row's or a header's own handler, or the list scrolled under a still
+        // pointer as it was let go (edgeFollow): go by what lies under the pointer.
+        const from = this.pressed;
+        const under = this.under();
         this.clearDrag();
+        this.dropOnItem(from, under);
         cx.notify();
       })
       .on_window_mouse_move((e, cx) => {
@@ -2287,7 +2538,9 @@ export default class Spaces extends View {
       })
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).font_medium().text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
-        .when(!collapsed, el => el.child("Spaces"))
+        .when(!collapsed, el => el.child(h_flex().flex_1().min_w(0).gap(8).items_center()
+          .child(div().flex_none().child("Spaces"))
+          .when(this.caption != null, (title) => title.child(this.machineTag(t)))))
         .child(h_flex().gap(2).items_center()
           .when(!collapsed, el => el.child(div().id("group-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New group")
@@ -2295,9 +2548,12 @@ export default class Spaces extends View {
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New space")
             .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
-      .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
+      .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("hover").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
-        .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
+        .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } this.soonCaption(cx); })
+        .on_scroll_wheel((_e, cx) => this.soonCaption(cx))
+        // A dragged row held near an edge scrolls the list: the pointer is followed wherever it is in the window.
+        .on_window_mouse_move((e, cx) => this.edgeFollow(e, cx))
         .children(list));
   }
 }

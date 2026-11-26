@@ -2,6 +2,15 @@
   "layout:kent": {
     "alt-down": "kent.next",
     "alt-up": "kent.prev",
+    "ctrl-1": "kent.select1",
+    "ctrl-2": "kent.select2",
+    "ctrl-3": "kent.select3",
+    "ctrl-4": "kent.select4",
+    "ctrl-5": "kent.select5",
+    "ctrl-6": "kent.select6",
+    "ctrl-7": "kent.select7",
+    "ctrl-8": "kent.select8",
+    "ctrl-9": "kent.select9",
     "ctrl-shift-pagedown": "kent.next",
     "ctrl-shift-pageup": "kent.prev"
   }

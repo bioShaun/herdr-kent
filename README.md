@@ -11,12 +11,15 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 - Groups spaces under named labels such as `design`, `code`, or `experiments`; unassigned spaces stay in `default`; once named groups are in use, `default` has its own foldable heading.
 - Groups are scoped to each machine; remote and local spaces are never mixed.
 - Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
-- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares.
-- Agents use the same icon chips through the included `kent-agents` mod.
+- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares. A name that doesn't fit, and every row of the compact rail, shows its full name in a tooltip.
+- The name keeps its width while it fits: the git tail is what narrows, and it is left out when only a stub of it would fit. A long name is cut in the middle, so its telling end stays visible.
+- Agents use the same icon chips and name tooltips through the included `kent-agents` mod, and drop the detail after a space's name where only a stub of it would fit.
+- Once a machine's header has scrolled out of the list, its name stays beside `Spaces` until you scroll back; click it to bring the header back.
+- Both lists show their scrollbar only while you are in them or scrolling.
 - Spaces can be created directly inside a group, assigned from the right-click menu, or dragged onto a group header.
 - Spaces can be reordered inside a group, dragged between groups, or moved back to `default`.
 - Worktrees stay nested under their checkout, and Herdr's machine/git/space ordering behavior is preserved.
-- The compact narrow-sidebar rail still works when the sidebar is very small.
+- The compact narrow-sidebar rail still works when the sidebar is very small. Its numbers are each row's place in the list as drawn, and the optional `ctrl-1` … `ctrl-9` keys select by them.
 
 ## Install
 
@@ -28,19 +31,29 @@ After the Gallery finishes indexing this repository, open:
 
 ### Manual install
 
-Copy the layout and mod into your Herdr home. If you use a custom `HERDR_APP_HOME`, replace `~/.config/herdr-app` with that directory.
-
 ```sh
 git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
+scripts/install.sh
+```
 
-cp layouts/kent.json layouts/kent.png ~/.config/herdr-app/layouts/
+`scripts/install.sh` copies the layout and both mods into `~/.config/herdr-app` — or into `$HERDR_APP_HOME` when that is set, or into the directory given as its argument — keeps a copy of every file it replaces in `<herdr-home>/kent-backup-<time>/`, and runs `herdr-app check` on the installed mods. It does not touch `keys.json`.
+
+The same files by hand (a custom `HERDR_APP_HOME` replaces `~/.config/herdr-app`):
+
+```sh
+cp layouts/kent.json layouts/kent.svg ~/.config/herdr-app/layouts/
 mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
 cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
 cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
 
 herdr-app check ~/.config/herdr-app/mods/kent
 herdr-app check ~/.config/herdr-app/mods/kent-agents
+```
+
+Then show the layout:
+
+```sh
 herdr-app do layout.switch '{"name":"kent"}'
 ```
 
@@ -59,13 +72,22 @@ herdr-app do layout.switch '{"name":"main"}'
   "layout:kent": {
     "alt-down": "kent.next",
     "alt-up": "kent.prev",
+    "ctrl-1": "kent.select1",
+    "ctrl-2": "kent.select2",
+    "ctrl-3": "kent.select3",
+    "ctrl-4": "kent.select4",
+    "ctrl-5": "kent.select5",
+    "ctrl-6": "kent.select6",
+    "ctrl-7": "kent.select7",
+    "ctrl-8": "kent.select8",
+    "ctrl-9": "kent.select9",
     "ctrl-shift-pagedown": "kent.next",
     "ctrl-shift-pageup": "kent.prev"
   }
 }
 ```
 
-These move through spaces in the order Kent draws them, skipping rows hidden inside folded groups.
+The first pair moves through spaces in the order Kent draws them, skipping rows hidden inside folded groups. `ctrl-1` … `ctrl-9` select the Nth row as the sidebar shows it, the number the narrow rail prints. Herdr's own `ctrl-N` goes by its internal space order, which parts ways with the list once groups and worktree nesting reorder rows; the `layout:kent` section wins over `global` while Kent is shown. Already merged an older `layout:kent` section? Add the nine `ctrl-N` lines to it.
 
 ## Using groups
 
@@ -75,6 +97,7 @@ These move through spaces in the order Kent draws them, skipping rows hidden ins
 - Choose `Move to default` to move it back to the default group.
 - Drag a space onto a group header to append it to that group.
 - Drag a space over another row to reorder it.
+- Hold a dragged space near the top or bottom edge of the list and the list scrolls that way, so a group that is out of sight can be dropped on.
 - While dragging a grouped space, use `Move to default` at the bottom of the list to remove it from its named group.
 - Click a group header to fold or unfold it; use its `+` button to create a new space inside that group.
 - Right-click a named group header to create a space in it, rename, reorder, fold/unfold, or delete it. Deleting a group never closes its spaces.
@@ -133,7 +156,9 @@ After changing the layout or mods, regenerate the preview from the repository ro
 python3 scripts/generate-preview.py
 ```
 
-The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png` (and its settings-picker copy `layouts/kent.png`, referenced by the layout's `preview` field), and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
+The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png`, and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
+
+The settings-picker thumbnail is separate: `layouts/kent.svg`, referenced by the layout's `preview` field, is a hand-drawn 320×200 schematic in the sparse built-in thumbnail style, with the grouped sidebar as the hero — violet folder group headers, indented members, a folded group keeping its red status dot, and a quiet work area. A full screenshot turns to mush at card size. Update it by hand when the layout structure changes.
 
 `RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.
 
