@@ -13,7 +13,7 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 - 分组标题可以折叠/展开，显示成员数量；折叠后仍会显示 blocked/done 状态。
 - space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。名称显示不全时（以及窄栏编号模式下），悬停可以看到完整名称。
 - 名称优先：放得下就保持完整，让 git 尾巴让位；尾巴只剩几个字母时直接不显示。长名称从中间省略，保留更有辨识度的结尾。
-- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip 和名称 tooltip；space 名后面的细节在只剩残片时干脆不显示。
+- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip 和名称 tooltip；space 名后面的细节在只剩残片时干脆不显示。子 agent 和分组的折叠状态会跨重启保留。
 - 某台机器的标题滚出列表后，它的名字会留在 `Spaces` 旁边，滚回去即消失；点一下可以回到该机器的标题。
 - 两个列表的滚动条只在鼠标停留或滚动时出现。
 - 可以直接在分组里新建 space，也可以通过右键菜单放入分组，或直接拖到分组标题上。
@@ -147,7 +147,7 @@ uv run --with pyobjc-framework-Quartz --with pillow python tests/hid-drag.py sca
 
 它会移动你的真实光标并按下真实按键；坐标和其它选项见脚本头部注释。它用 `HERDR_APP_HOME`（或 `--home`）指定 home，并在屏幕上有多个 Herdr 窗口时拒绝猜测：传 `--window-id`，或只保留一个窗口。指定的窗口要先切到最前面。
 
-两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）。脚本里的 `herdr-app check` 会使用临时隔离的 app home/core session，不会干扰正在运行的默认 Herdr core：
+两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）。脚本里的 `herdr-app check` 会使用临时隔离的 app home/core session，并检查每个 mod 的临时副本，不会干扰正在运行的默认 Herdr core，也不会在仓库里生成编辑器文件：
 
 ```sh
 python3 scripts/check.py
@@ -169,6 +169,7 @@ uv run --with pillow python scripts/generate-preview.py
 
 设置页选择器的缩略图是独立维护的：layout 的 `preview` 字段指向 `layouts/kent.svg`，这是一张手绘的 320×200 示意图，沿用内置缩略图的极简风格，但让分组侧栏当主角——紫色文件夹组头、缩进成员行、保留红色状态点的折叠组，工作区退居背景。完整截图缩到卡片大小会糊成一团。布局结构变化时请手动更新这张示意图。
 
+`SPEC.md` 是产出这套 layout 的设计审查记录，属于历史文档；当前行为以本文和 `RECIPE.md` 为准。
 `RECIPE.md` 是按照 Herdr Gallery 格式编写的详细实现说明。
 
 ## License

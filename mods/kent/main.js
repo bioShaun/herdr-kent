@@ -1783,21 +1783,13 @@ export default class Spaces extends View {
 
   // Space creation does not return the new id. Serialize requests so a quick
   // second click cannot make two pending creations race for the same diff.
-  newSpaceInGroup(g, machine = g.machine ?? null, cx = null) {
+  newSpaceInGroup(g, machine = g.machine ?? null, cx) {
     if (g.virtual) {
       run("space.new", { machine: machine ?? "", focus: true });
       if (g.folded) this.setGroupFolded(g.id, machine, false);
       return;
     }
     const request = { group: g.id, machine: machine ?? null, unfold: Boolean(g.folded) };
-    if (!cx) {
-      const before = new Set(spaces().map((space) => space.id));
-      run("space.new", { machine: request.machine ?? "", focus: true });
-      const created = this.createdSpace(before, request.machine);
-      if (created) this.assignToGroup(created.id, request.group);
-      if (created && request.unfold) this.setGroupFolded(request.group, request.machine, false);
-      return;
-    }
     this.newSpaceRequests ??= [];
     this.newSpaceRequests.push(request);
     if (this.newSpaceWorker) return;
@@ -2006,6 +1998,8 @@ export default class Spaces extends View {
       }
     }
     const loose = mine.filter((row) => !claimed.has(row.w.id));
+    // No loose rows means no default header: an empty header would only offer a
+    // fold toggle over nothing, and every create path unfolds default first.
     if (loose.length) {
       const fallback = defaultGroupFor(machine, data);
       if (groups.length > 0 || fallback.folded) {

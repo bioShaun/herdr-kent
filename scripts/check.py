@@ -5,7 +5,8 @@ Herdr installs each mod from its own directory, so both mods keep their own
 copy of icon-chip.js and icon-metrics.js. icon-metrics.js is regenerated into
 both places at once; icon-chip.js is maintained by hand and can drift. This
 script fails when the pairs differ, validates the JSON files, and runs
-`herdr-app check` on both mods when the binary is available.
+`herdr-app check` on disposable copies of both mods when the binary is
+available. The copies keep Herdr's generated editor files out of the repository.
 
 Run from anywhere with:
 
@@ -87,13 +88,23 @@ def check_mods():
     # Even `herdr-app check` can otherwise share the person's running default
     # core through the app holder. Keep the one-shot check in a disposable app
     # home and core session so verifying Kent never disturbs the live window.
+    # Check a copy of each mod too: herdr-app writes jsconfig.json and
+    # gpui-kit.d.ts beside the mod it loads, and those must not land in the repo.
     env = os.environ.copy()
     with tempfile.TemporaryDirectory(prefix="kent-check-") as tmp:
         env["HERDR_APP_HOME"] = tmp
         env["HC_SESSION"] = f"kent-check-{os.getpid()}"
+        mods_root = Path(tmp) / "mods"
+        mods_root.mkdir()
         try:
             for mod in MODS:
-                result = subprocess.run([binary, "check", str(ROOT / "mods" / mod)], text=True, capture_output=True, env=env)
+                target = mods_root / mod
+                shutil.copytree(
+                    ROOT / "mods" / mod,
+                    target,
+                    ignore=shutil.ignore_patterns("jsconfig.json", "gpui-kit.d.ts"),
+                )
+                result = subprocess.run([binary, "check", str(target)], text=True, capture_output=True, env=env)
                 if result.returncode != 0:
                     problems.append(f"herdr-app check mods/{mod} failed: {(result.stdout or result.stderr).strip()}")
         finally:

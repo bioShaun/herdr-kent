@@ -20,6 +20,7 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 // say something: with less room than this (about seven characters), or less than all of it
 // takes, the space name keeps the line. The tooltip has the detail either way.
 const DETAIL_MIN = 56;
+const MIGRATE_RETRY = 5000;
 // A 13px Latin glyph is about 7.8 wide; CJK and emoji take a full em (about 13).
 // Before the row reports its real room, this keeps a short CJK detail from being
 // treated as if it had Latin's narrower width.
@@ -117,19 +118,29 @@ function icon(p, t, size) {
 export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu) return;
-    this.folded = new Set();
+    // Folded sub-agents and groups survive restarts. A stale id is harmless: it
+    // simply matches nothing in the next list.
+    try {
+      const saved = JSON.parse(localStorage.getItem("folded") ?? "[]");
+      this.folded = new Set(Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : []);
+    } catch { this.folded = new Set(); }
     // Each agent's last state and when it changed (ms), kept across restarts.
     try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
     if (!this.changed || typeof this.changed !== "object" || Array.isArray(this.changed)) this.changed = {};
     try { this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]"); } catch { this.pendingPins = []; }
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     if (!this.pendingPins.length) localStorage.removeItem("pins");
-    this.migratingPins = new Set();
+    // Address -> when this session last tried to migrate it to the core.
+    this.migratingPins = new Map();
     // What each row leaves after its space name (the layout reports it), and the unit the
     // layout reports sizes in, by the 28px time box.
     this.room = new Map();
     this.pxScale = 0;
     if (!checking()) cx.timer.every(30000, (cx) => cx.notify());
+  }
+
+  saveFolded() {
+    try { localStorage.setItem("folded", JSON.stringify([...this.folded])); } catch {}
   }
 
   // What the row leaves after its name, for the detail: the layout reports the detail's box
@@ -163,21 +174,25 @@ export default class Agents extends View {
   }
 
   // Keep offline pins until their terminal returns, and keep each pending until
-  // core echoes the label so a failed write doesn't erase the old pin.
+  // core echoes the label so a failed write doesn't erase the old pin. A failed
+  // write is retried: the old Set kept the address forever after one attempt.
   migratePins(all) {
     const listed = new Map(all.filter((t) => t.state === "live").map((t) => [t.address, t]));
+    const now = Date.now();
     const pending = this.pendingPins.filter((address) => {
       const terminal = listed.get(address);
       if (!terminal) return true;
       if (terminal.labels?.["herdr.pinned"]) return false;
-      if (!this.migratingPins.has(address)) {
-        this.migratingPins.add(address);
+      const attempted = this.migratingPins.get(address);
+      if (attempted === undefined || now - attempted > MIGRATE_RETRY) {
+        this.migratingPins.set(address, now);
         run("terminal.pin", { terminal: address, pinned: true });
       }
       return true;
     });
     if (pending.length === this.pendingPins.length) return;
     this.pendingPins = pending;
+    if (!pending.length) this.migratingPins.clear();
     if (pending.length) localStorage.setItem("pins", JSON.stringify(pending));
     else localStorage.removeItem("pins");
   }
@@ -341,6 +356,7 @@ export default class Agents extends View {
         .on_click((_e, cx) => {
           cx.stop_propagation();
           open ? this.folded.add(a.address) : this.folded.delete(a.address);
+          this.saveFolded();
           cx.notify();
         })
         .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none())
@@ -440,6 +456,7 @@ export default class Agents extends View {
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
             this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
+            this.saveFolded();
             cx.notify();
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
@@ -495,6 +512,7 @@ export default class Agents extends View {
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
+          this.saveFolded();
           cx.notify();
         })
         .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(10).flex_none().text_color(t.dim))

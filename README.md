@@ -13,7 +13,7 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 - Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
 - Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares. A name that doesn't fit shows its full name in a tooltip, as does every row of the compact rail.
 - The name keeps its width while it fits: the git tail is what narrows, and it is left out when only a stub of it would fit. A long name is cut in the middle, so its telling end stays visible.
-- Agents use the same icon chips and name tooltips through the included `kent-agents` mod, and drop the detail after a space's name where only a stub of it would fit.
+- Agents use the same icon chips and name tooltips through the included `kent-agents` mod, and drop the detail after a space's name where only a stub of it would fit. Sub-agent and group folds persist across restarts.
 - Once a machine's header has scrolled out of the list, its name stays beside `Spaces` until you scroll back; click it to bring the header back.
 - Both lists show their scrollbar only while you are in them or scrolling.
 - Spaces can be created directly inside a group, assigned from the right-click menu, or dragged onto a group header.
@@ -147,7 +147,7 @@ uv run --with pyobjc-framework-Quartz --with pillow python tests/hid-drag.py sca
 
 It moves your real cursor and presses the real button; coordinates and options are in the script's header. It uses `HERDR_APP_HOME` (or `--home`) for the home, and refuses to guess when more than one Herdr window is visible: pass `--window-id`, or close all but one. A chosen window must be brought to the front first.
 
-Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with the following command. Its `herdr-app check` runs use a temporary isolated app home/core session, so they do not disturb the running default Herdr core:
+Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with the following command. Its `herdr-app check` runs use a temporary isolated app home/core session and check a copy of each mod, so they neither disturb the running default Herdr core nor generate editor files in the repository:
 
 ```sh
 python3 scripts/check.py
@@ -169,6 +169,7 @@ The script starts a temporary isolated Herdr home/core, seeds curated demo space
 
 The settings-picker thumbnail is separate: `layouts/kent.svg`, referenced by the layout's `preview` field, is a hand-drawn 320×200 schematic in the sparse built-in thumbnail style, with the grouped sidebar as the hero — violet folder group headers, indented members, a folded group keeping its red status dot, and a quiet work area. A full screenshot turns to mush at card size. Update it by hand when the layout structure changes.
 
+`SPEC.md` is the historical design record for the review that produced this layout; current behavior is described here and in `RECIPE.md`.
 `RECIPE.md` is the detailed implementation brief used for the Herdr Gallery format.
 
 ## License
