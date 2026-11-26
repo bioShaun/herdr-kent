@@ -20,8 +20,32 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 // say something: with less room than this (about seven characters), or less than all of it
 // takes, the space name keeps the line. The tooltip has the detail either way.
 const DETAIL_MIN = 56;
-// A 13px monospace character, for estimating the detail.
+// A 13px Latin glyph is about 7.8 wide; CJK and emoji take a full em (about 13).
+// Before the row reports its real room, this keeps a short CJK detail from being
+// treated as if it had Latin's narrower width.
 const CHAR = 7.8;
+const charPx = (cp) => {
+  if (cp === 0x200d || (cp >= 0xfe00 && cp <= 0xfe0f)) return 0;
+  if ((cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x1ab0 && cp <= 0x1aff)
+    || (cp >= 0x1dc0 && cp <= 0x1dff) || (cp >= 0x20d0 && cp <= 0x20ff)
+    || (cp >= 0xfe20 && cp <= 0xfe2f)) return 0;
+  return ((cp >= 0x1100 && cp <= 0x115f)
+    || cp === 0x2329 || cp === 0x232a
+    || (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f)
+    || (cp >= 0xac00 && cp <= 0xd7a3)
+    || (cp >= 0xf900 && cp <= 0xfaff)
+    || (cp >= 0xfe10 && cp <= 0xfe19)
+    || (cp >= 0xfe30 && cp <= 0xfe6f)
+    || (cp >= 0xff00 && cp <= 0xff60)
+    || (cp >= 0xffe0 && cp <= 0xffe6)
+    || (cp >= 0x1f000 && cp <= 0x1faff)
+    || (cp >= 0x20000 && cp <= 0x3fffd)) ? 13 : CHAR;
+};
+const textPx = (text) => {
+  let px = 0;
+  for (const ch of text) px += charPx(ch.codePointAt(0));
+  return px;
+};
 
 // To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
 function toggleSidebar() {
@@ -393,7 +417,7 @@ export default class Agents extends View {
       const tip = [machine, name, more].filter(Boolean).join(" · ");
       const detailText = full && more ? `\u00b7 ${more}` : "";
       const room = this.room?.get(a.address);
-      const showDetail = Boolean(detailText) && (room === undefined || room >= Math.min(DETAIL_MIN, detailText.length * CHAR));
+      const showDetail = Boolean(detailText) && (room === undefined || room >= Math.min(DETAIL_MIN, textPx(detailText)));
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)

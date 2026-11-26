@@ -25,14 +25,15 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 
 ### 从 Herdr Gallery 安装
 
-等 Gallery 完成索引后，打开：
+打开：
 
 <https://herdr.dev/layouts/bioShaun/herdr-kent>
 
 ### 手动安装
 
 ```sh
-git clone git@github.com:bioShaun/herdr-kent.git
+git clone https://github.com/bioShaun/herdr-kent.git
+# 也可以用 SSH：git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
 scripts/install.sh
 ```
@@ -144,7 +145,7 @@ node scripts/test-group-sync.js --core
 uv run --with pyobjc-framework-Quartz --with pillow python tests/hid-drag.py scan-edge
 ```
 
-它会移动你的真实光标并按下真实按键；坐标和其它选项见脚本头部注释。
+它会移动你的真实光标并按下真实按键；坐标和其它选项见脚本头部注释。它用 `HERDR_APP_HOME`（或 `--home`）指定 home，并在屏幕上有多个 Herdr 窗口时拒绝猜测：传 `--window-id`，或只保留一个窗口。指定的窗口要先切到最前面。
 
 两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）。脚本里的 `herdr-app check` 会使用临时隔离的 app home/core session，不会干扰正在运行的默认 Herdr core：
 
@@ -164,7 +165,7 @@ uv run --with svgpathtools python scripts/generate-icon-metrics.py
 uv run --with pillow python scripts/generate-preview.py
 ```
 
-脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`，结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。
+脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`，结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。可以用 `--font` 改预览字体（默认 `JetBrainsMono Nerd Font Mono`），调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。
 
 设置页选择器的缩略图是独立维护的：layout 的 `preview` 字段指向 `layouts/kent.svg`，这是一张手绘的 320×200 示意图，沿用内置缩略图的极简风格，但让分组侧栏当主角——紫色文件夹组头、缩进成员行、保留红色状态点的折叠组，工作区退居背景。完整截图缩到卡片大小会糊成一团。布局结构变化时请手动更新这张示意图。
 

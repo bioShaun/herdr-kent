@@ -54,16 +54,16 @@ if [ -d "$backup" ]; then
 fi
 
 if command -v herdr-app >/dev/null 2>&1; then
-  herdr-app check "$home/mods/kent"
-  herdr-app check "$home/mods/kent-agents"
+  HERDR_APP_HOME="$home" herdr-app check "$home/mods/kent"
+  HERDR_APP_HOME="$home" herdr-app check "$home/mods/kent-agents"
 else
   echo "herdr-app is not on PATH; run these to check the installed mods:"
-  echo "  herdr-app check \"$home/mods/kent\""
-  echo "  herdr-app check \"$home/mods/kent-agents\""
+  echo "  HERDR_APP_HOME=\"$home\" herdr-app check \"$home/mods/kent\""
+  echo "  HERDR_APP_HOME=\"$home\" herdr-app check \"$home/mods/kent-agents\""
 fi
 
 if [ -f "$home/keys.json" ] && ! grep -q '"layout:kent"' "$home/keys.json"; then
   echo "keys.json here has no layout:kent section: the optional keys in this repository's"
   echo "keys.json are merged in by hand (README, \"Optional keys\")."
 fi
-echo "To show Kent:  herdr-app do layout.switch '{\"name\":\"kent\"}'"
+printf 'To show Kent:  HERDR_APP_HOME="%s" herdr-app do layout.switch '\''{"name":"kent"}'\''\n' "$home"

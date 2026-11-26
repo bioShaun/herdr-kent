@@ -45,6 +45,31 @@ const RING_DELAY = 150;
 // A git tail narrower than this (about eight characters) is not drawn: a stub of a repo or
 // branch name next to a full name reads as noise.
 const TAIL_MIN = 56;
+// Sidebar text is 13px: a Latin glyph is about 7.8 wide, while CJK and emoji take a
+// full em (about 13). A name and its git tail share one row, so treating a CJK name
+// as Latin leaves room the tail does not really have and crowds the name.
+const charPx = (cp) => {
+  if (cp === 0x200d || (cp >= 0xfe00 && cp <= 0xfe0f)) return 0;
+  if ((cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x1ab0 && cp <= 0x1aff)
+    || (cp >= 0x1dc0 && cp <= 0x1dff) || (cp >= 0x20d0 && cp <= 0x20ff)
+    || (cp >= 0xfe20 && cp <= 0xfe2f)) return 0;
+  return ((cp >= 0x1100 && cp <= 0x115f)
+    || cp === 0x2329 || cp === 0x232a
+    || (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f)
+    || (cp >= 0xac00 && cp <= 0xd7a3)
+    || (cp >= 0xf900 && cp <= 0xfaff)
+    || (cp >= 0xfe10 && cp <= 0xfe19)
+    || (cp >= 0xfe30 && cp <= 0xfe6f)
+    || (cp >= 0xff00 && cp <= 0xff60)
+    || (cp >= 0xffe0 && cp <= 0xffe6)
+    || (cp >= 0x1f000 && cp <= 0x1faff)
+    || (cp >= 0x20000 && cp <= 0x3fffd)) ? 13 : 7.8;
+};
+const textPx = (text) => {
+  let px = 0;
+  for (const ch of text) px += charPx(ch.codePointAt(0));
+  return px;
+};
 // What a list child takes up from the top of the list: `h`, as each says when it is made
 // (the same pixels as scroll.offset()), a row's height until it says.
 const ofItem = (m) => m?.h ?? 28;
@@ -1304,7 +1329,7 @@ export default class Spaces extends View {
   }
 
   rebuilt(machine) {
-    return machine?.state === "unreachable" && /^a different core answers there \("[^"]+"\)$/.test(machine.why ?? "");
+    return machine?.state === "unreachable" && String(machine.why ?? "").includes("a different core answers there (\"");
   }
 
   reconnect(machine, cx) {
@@ -2426,9 +2451,9 @@ export default class Spaces extends View {
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
     // An estimate, in the sidebar's pixels: what the row takes up around the two (83), a
-    // tree row's indent and branch (43), the name (a 13px monospace character is 7.8 wide)
+    // tree row's indent and branch (43), the name (a 13px glyph, 7.8 Latin or 13 CJK)
     // and the gap after it. Less than TAIL_MIN left, and the text is left out.
-    const room = (this.sidePx ?? 268) - 83 - (tree ? 43 : 0) - name.length * 7.8 - 8;
+    const room = (this.sidePx ?? 268) - 83 - (tree ? 43 : 0) - textPx(name) - 8;
     const where = room < TAIL_MIN ? "" : [repo, branch].filter(Boolean).join(" \u00b7 ");
     const marks = [g.ahead > 0 ? `\u2191${g.ahead}` : "", g.behind > 0 ? `\u2193${g.behind}` : ""].filter(Boolean);
     return h_flex()

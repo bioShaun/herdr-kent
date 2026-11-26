@@ -19,7 +19,13 @@ whether rows inside the crop band moved. A band that starts too far below the
 rows you can see is exactly the bug the viewport height fixed.
 
 Coordinates are window pixels; the window is found by name, so moving it is
-fine. The crop band defaults to a strip of rows that stays in view for both the
+fine. HERDR_APP_HOME (or --home) selects the home used for the sidebar width
+and herdr-app shot; it does not choose a window. If more than one Herdr window
+is on screen the script stops and lists them: pass --window-id, or close all
+but one. A window chosen with --window-id must be brought to the front before
+running, because HID events go to the window under the pointer.
+
+The crop band defaults to a strip of rows that stays in view for both the
 top and the scrolled state; widen it with --crop-top/--crop-bottom when the
 window is much taller.
 """
@@ -38,18 +44,45 @@ from PIL import Image, ImageChops
 HOME = os.environ.get("HERDR_APP_HOME") or os.path.expanduser("~/.config/herdr-app")
 
 
-def window():
-    """The front window called Herdr, as (x, y, width, height) in screen points."""
+def set_home(path):
+    global HOME
+    if not path:
+        return
+    HOME = os.path.abspath(os.path.expanduser(path))
+    os.environ["HERDR_APP_HOME"] = HOME
+
+
+def window(window_id=None):
+    """The one Herdr window on screen, as (x, y, width, height) in screen points."""
     found = []
     for w in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID):
         if (w.get("kCGWindowOwnerName") or "") != "Herdr":
             continue
         b = w.get("kCGWindowBounds") or {}
         if b.get("Width", 0) > 400 and b.get("Height", 0) > 300:
-            found.append((b["X"], b["Y"], b["Width"], b["Height"]))
+            found.append({
+                "id": w.get("kCGWindowNumber"),
+                "pid": w.get("kCGWindowOwnerPID"),
+                "bounds": (b["X"], b["Y"], b["Width"], b["Height"]),
+            })
     if not found:
         sys.exit("no Herdr window on screen: open it first")
-    return max(found, key=lambda b: b[2] * b[3])
+
+    def listed():
+        return "\n".join(
+            f"  id={w['id']} pid={w['pid']} {w['bounds'][2]:.0f}x{w['bounds'][3]:.0f} at "
+            f"{w['bounds'][0]:.0f},{w['bounds'][1]:.0f}"
+            for w in found
+        )
+
+    if window_id is not None:
+        match = next((w for w in found if w["id"] == window_id), None)
+        if match is None:
+            sys.exit(f"no Herdr window with id {window_id}; visible:\n{listed()}")
+        return match["bounds"]
+    if len(found) > 1:
+        sys.exit("more than one Herdr window is visible; pass --window-id or close all but one:\n" + listed())
+    return found[0]["bounds"]
 
 
 def sidebar_width():
@@ -117,14 +150,18 @@ def scrolled(changed, box):
     return changed > 2500 and box is not None and box[3] - box[1] > 120
 
 
-def focus():
+def focus(window_id=None):
+    # With one window, activating Herdr is enough. With an explicit id, the caller
+    # has to bring that window forward: activating the app may pick another one.
+    if window_id is not None:
+        return
     subprocess.run(["open", "-a", "Herdr"])
     time.sleep(0.8)
 
 
 def cmd_click(p, args):
     x, y = (float(v) for v in args.at.split(","))
-    focus()
+    focus(args.window_id)
     p.move(1200, 600)
     p.move(x, y)
     p.down(x, y)
@@ -134,7 +171,7 @@ def cmd_click(p, args):
 
 def cmd_drag(p, args):
     width = sidebar_width()
-    focus()
+    focus(args.window_id)
     p.move(1200, 600)
     p.move(args.press_x, args.press_y)
     p.down(args.press_x, args.press_y)
@@ -156,7 +193,7 @@ def cmd_scan_edge(p, args):
     width = sidebar_width()
     height = Image.open(shot(tempfile.mktemp(suffix=".png"))).size[1]
     bottom = args.crop_bottom or height * 0.6
-    focus()
+    focus(args.window_id)
     print(f"window {p.win[0]:.0f},{p.win[1]:.0f} {p.win[2]:.0f}x{p.win[3]:.0f}; sidebar {width:.0f}; band {args.crop_top:.0f}..{bottom:.0f}")
     for y in [float(v) for v in args.ys.split(",")]:
         p.move(1200, 600)
@@ -179,6 +216,8 @@ def cmd_scan_edge(p, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--home", help="Herdr home for sidebar width and herdr-app shot; defaults to HERDR_APP_HOME or ~/.config/herdr-app")
+    ap.add_argument("--window-id", type=int, help="CGWindowNumber to drive; needed when several Herdr windows are visible")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("scan-edge", help="does holding a row at each y scroll the list?")
@@ -206,7 +245,8 @@ def main():
     c.set_defaults(run=cmd_click)
 
     args = ap.parse_args()
-    p = Pointer(window())
+    set_home(args.home)
+    p = Pointer(window(args.window_id))
     args.run(p, args)
 
 

@@ -25,14 +25,15 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 
 ### From the Herdr Gallery
 
-After the Gallery finishes indexing this repository, open:
+Open:
 
 <https://herdr.dev/layouts/bioShaun/herdr-kent>
 
 ### Manual install
 
 ```sh
-git clone git@github.com:bioShaun/herdr-kent.git
+git clone https://github.com/bioShaun/herdr-kent.git
+# SSH instead: git clone git@github.com:bioShaun/herdr-kent.git
 cd herdr-kent
 scripts/install.sh
 ```
@@ -144,7 +145,7 @@ The drag checks need the real pointer, since a mod only sees real mouse events. 
 uv run --with pyobjc-framework-Quartz --with pillow python tests/hid-drag.py scan-edge
 ```
 
-It moves your real cursor and presses the real button; coordinates and options are in the script's header.
+It moves your real cursor and presses the real button; coordinates and options are in the script's header. It uses `HERDR_APP_HOME` (or `--home`) for the home, and refuses to guess when more than one Herdr window is visible: pass `--window-id`, or close all but one. A chosen window must be brought to the front first.
 
 Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with the following command. Its `herdr-app check` runs use a temporary isolated app home/core session, so they do not disturb the running default Herdr core:
 
@@ -164,7 +165,7 @@ After changing the layout or mods, regenerate the preview from the repository ro
 uv run --with pillow python scripts/generate-preview.py
 ```
 
-The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png`, and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
+The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png`, and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--font` to override the preview font (default `JetBrainsMono Nerd Font Mono`), `--keep` to keep the isolated directory for debugging, or `--output` to write another file.
 
 The settings-picker thumbnail is separate: `layouts/kent.svg`, referenced by the layout's `preview` field, is a hand-drawn 320×200 schematic in the sparse built-in thumbnail style, with the grouped sidebar as the hero — violet folder group headers, indented members, a folded group keeping its red status dot, and a quiet work area. A full screenshot turns to mush at card size. Update it by hand when the layout structure changes.
 
