@@ -89,9 +89,12 @@ Kent 不再写死亮色或暗色主题。它会跟随 `settings.json`、系统�
 
 - 分组是手动维护的；Kent 不会根据路径、名称前缀或 tag 自动分组。
 - 分组不能跨机器。两台机器上同名分组是相互独立的。
-- 分组状态保存在本机 Herdr shared state 的 `kent.groups.v1` 里，不会同步到其他 Herdr 客户端。
+- 分组状态按机器保存在那台机器的 herdr-core document `kent.groups.v1` 里。连接到同一台机器的不同客户端会看到相同的分组、成员、顺序和折叠状态；即使各客户端给这台机器起了不同别名也没问题，因为成员关系保存的是机器本地 space id。
+- 窗口里的修改会先即时显示，再异步写入 core document；写入使用版本号 CAS。发生并发冲突时会重新读取最新文档并把本次操作意图重新应用上去，而不是直接覆盖另一个客户端的修改。窗口可见时 Kent 大约每 3 秒轮询一次，因此其他客户端的修改可能需要几秒才会出现。
+- 如果机器离线，或它的 core 太旧、不支持 document 存储，Kent 会退回到原来的客户端本地行为，并把修改保存在本地队列里。队列会跨 app 重启保留，并在机器/core 可用后重试；在同步成功前，这些修改对其他客户端不可见。
+- 旧的客户端本地分组会在首次连接时迁移到对应机器的 document。由于旧数据没有跨客户端稳定身份，同名旧分组会被合并；machine document 中已有的成员关系优先。如果多台客户端以前的分组已经分叉，第一次同步迁移后建议检查重要分组。
 - 命名组内排序由 Kent 管理；`default` 组里的 spaces 仍使用 Herdr 自己的排序。
-- Kent 是基于 Herdr 0.1.18 开发和测试的。
+- Kent 是基于 Herdr 0.1.18 开发和测试的。跨客户端分组同步需要支持 machine-scoped document 的 herdr-core（已用 0.1.22 验证）；较旧 core 会使用客户端本地 fallback。
 - 可见边界数据目前覆盖 Herdr 0.1.18 自带的 SVG icon；未来 Herdr 新增 icon 后可以用 `scripts/generate-icon-metrics.py` 重新生成。未知自定义 icon 仍会退回方形适配。
 
 ## 开发
@@ -105,7 +108,14 @@ herdr-app check mods/kent
 herdr-app check mods/kent-agents
 ```
 
-两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）：
+运行分组同步单元测试；`--core` 还会用临时 `HC_SESSION` 做隔离的真实 core document/CAS 测试，不会碰默认 core：
+
+```sh
+node scripts/test-group-sync.js
+node scripts/test-group-sync.js --core
+```
+
+两个 mod 各自保存一份 `icon-chip.js` 和 `icon-metrics.js`。修改任意一份后，用下面的命令校验两处副本仍然一致（且两个 mod 仍能加载）。脚本里的 `herdr-app check` 会使用临时隔离的 app home/core session，不会干扰正在运行的默认 Herdr core：
 
 ```sh
 python3 scripts/check.py

@@ -422,6 +422,11 @@ def write_groups(app_home, ids):
     shared_path = app_home / "shared.json"
     shared = json.loads(shared_path.read_text(encoding="utf-8")) if shared_path.exists() else {}
     shared.update(SHARED_DEFAULTS)
+    # The first empty launch is only used to create demo spaces. Remove its
+    # sync bookkeeping so the seeded shared-state groups exercise the same
+    # migration path as a real upgrade from an older Kent release.
+    for key in ("kent.groups.sync.migrated", "kent.groups.sync.versions", "kent.groups.pending.v1"):
+        shared.pop(key, None)
     shared["kent.groups.v1"] = {
         "version": 1,
         "groups": [

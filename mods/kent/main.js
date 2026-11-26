@@ -71,63 +71,110 @@ export function tone(t, status) {
 }
 
 const STORE = "kent.groups.v1";
+const GROUP_DOC = "kent.groups.v1";
+const MIGRATED_KEY = "kent.groups.sync.migrated";
+const PENDING_KEY = "kent.groups.pending.v1";
+const VERSIONS_KEY = "kent.groups.sync.versions";
 const DEFAULT_GROUP = "__default__";
 const groupId = () => `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 const pendingGroupSpaces = [];
 let wakeGroupSpaces = null;
+const spaceCreations = new Map(); // machine/null -> in-flight creations on it
+
+function beginSpaceCreation(machine) {
+  machine = machine ?? null;
+  spaceCreations.set(machine, (spaceCreations.get(machine) ?? 0) + 1);
+}
+
+function endSpaceCreation(machine) {
+  machine = machine ?? null;
+  const left = (spaceCreations.get(machine) ?? 0) - 1;
+  if (left > 0) spaceCreations.set(machine, left);
+  else spaceCreations.delete(machine);
+}
 // The mod's load time stands in for the app's start: a machine that answers
 // with no spaces at all within this grace window may simply still be loading,
 // so its group membership is not pruned yet.
 const startedAt = Date.now();
 const STARTUP_GRACE = 10000;
 const PRUNE_EVERY = 60000;
+const SYNC_EVERY = 3000;
+// A sync worker belongs to the mod copy whose cx started it and dies with
+// that copy. The heartbeat lets a surviving copy adopt the shared worker.
+const SYNC_STALE = 9000;
+const SYNC_RETRY = 10000;
+const SYNC_UNSUPPORTED_RETRY = 60000;
+const SYNC_CONFLICTS = 6;
+// A version regression is usually just two hc connect processes answering out
+// of order. If it persists across several polls, the machine core was rebuilt
+// or lost its documents; versions from that new incarnation are not comparable.
+const SYNC_RESET_GRACE = 12000;
 
-// Closed spaces leave their ids behind in group membership. Prune them, but
-// only for a machine that is definitely answering: one that is away, asleep or
-// still loading keeps every id, because its spaces simply aren't here to ask.
-// Returns true when at least one dead id was removed.
-function pruneStore(data, sp, ms, busyMachines) {
-  if (checking()) return false;
-  let removed = false;
-  const machineNames = new Set(data.groups.map((g) => g.machine ?? null));
-  for (const machine of machineNames) {
-    const entry = ms.find((m) => (m.name ?? null) === machine);
-    if (!entry || entry.layout !== "ready") continue;
-    if (busyMachines.has(machine)) continue;
-    const live = new Set(sp.filter((s) => (s.machine ?? null) === machine).map((s) => s.id));
-    if (!live.size && Date.now() - startedAt < STARTUP_GRACE) continue;
-    for (const g of data.groups) {
-      if ((g.machine ?? null) !== machine) continue;
-      const list = data.in[g.id];
-      if (!Array.isArray(list)) continue;
-      const kept = list.filter((id) => live.has(id));
-      if (kept.length !== list.length) {
-        data.in[g.id] = kept;
-        removed = true;
-      }
+// Space ids shown by the app are client-qualified on another machine
+// ("4090/sp…"). The machine's own document stores the machine-local id, so two
+// clients that call the same machine by different names still mean the same space.
+function bareSpaceId(id, machine) {
+  const prefix = `${machine}/`;
+  return machine && id.startsWith(prefix) ? id.slice(prefix.length) : id;
+}
+
+function clientSpaceId(id, machine) {
+  const prefix = `${machine}/`;
+  return machine && !id.startsWith(prefix) ? `${prefix}${id}` : id;
+}
+
+function copyMachineData(data) {
+  return JSON.parse(JSON.stringify(data));
+}
+
+function emptyMachineData() {
+  return { groups: [], in: {}, defaultFolded: false, at: 0 };
+}
+
+// One machine's canonical document. A bare space id is in at most one group's
+// ordered list; absence from every list means the space is ungrouped.
+function normalizeMachineData(raw, machine = null) {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const rawGroups = Array.isArray(source.groups) ? source.groups : [];
+  const groups = [];
+  const groupIds = new Set();
+  for (const g of rawGroups) {
+    if (!g || typeof g.id !== "string" || !g.id || groupIds.has(g.id)) continue;
+    groupIds.add(g.id);
+    groups.push({
+      id: g.id,
+      name: typeof g.name === "string" && g.name.trim() ? g.name : "Group",
+      folded: Boolean(g.folded),
+    });
+  }
+  const rawIn = source.in && typeof source.in === "object" && !Array.isArray(source.in) ? source.in : {};
+  const seen = new Set();
+  const membership = {};
+  for (const g of groups) {
+    membership[g.id] = [];
+    const list = Array.isArray(rawIn[g.id]) ? rawIn[g.id] : [];
+    for (const rawId of list) {
+      if (typeof rawId !== "string" || !rawId) continue;
+      const id = bareSpaceId(rawId, machine);
+      // Canonical machine-local space ids never contain a slash. Anything left
+      // with one belongs to another machine alias (or is corrupt), so carrying
+      // it into this machine's document would make membership unmatchable.
+      if (!id || id.includes("/") || seen.has(id)) continue;
+      seen.add(id);
+      membership[g.id].push(id);
     }
   }
-  return removed;
+  let defaultFolded = false;
+  if (typeof source.defaultFolded === "boolean") defaultFolded = source.defaultFolded;
+  else if (source.defaultFolded && typeof source.defaultFolded === "object" && !Array.isArray(source.defaultFolded)) {
+    defaultFolded = Boolean(source.defaultFolded[machine ?? ""]);
+  }
+  return { groups, in: membership, defaultFolded, at: typeof source.at === "number" ? source.at : 0 };
 }
 
-function queueNewSpaceInGroup(id, machine = null) {
-  pendingGroupSpaces.push({ id, machine, at: Date.now() });
-  wakeGroupSpaces?.();
-}
-
-function defaultGroupFor(machine, data) {
-  return {
-    id: DEFAULT_GROUP,
-    name: "default",
-    machine: machine ?? null,
-    folded: Boolean(data.defaultFolded?.[machine ?? ""]),
-    virtual: true,
-  };
-}
-
-// Groups are per machine. A space id is in at most one group's ordered list;
-// absence from every list means the space is ungrouped.
-function readStore() {
+// The old shared-store shape, still used as a migration source and as a local
+// backup when a core is too old for documents or cannot be reached yet.
+function readLegacyShared() {
   const raw = shared(STORE) ?? {};
   const rawGroups = Array.isArray(raw.groups) ? raw.groups : [];
   const groups = [];
@@ -162,8 +209,795 @@ function readStore() {
   return { groups, in: membership, defaultFolded };
 }
 
-function writeStore(data) {
-  setShared(STORE, { version: 1, groups: data.groups, in: data.in, defaultFolded: data.defaultFolded ?? {}, at: Date.now() });
+function legacyMachineData(machine) {
+  machine = machine ?? null;
+  const legacy = readLegacyShared();
+  const data = emptyMachineData();
+  for (const g of legacy.groups) {
+    if ((g.machine ?? null) !== machine) continue;
+    data.groups.push({ id: g.id, name: g.name, folded: Boolean(g.folded) });
+    // Older clients always stored remote rows in this client's qualified form.
+    // If the machine was renamed afterwards, that qualifier is an old alias
+    // rather than the current one; because canonical space ids cannot contain
+    // a slash, any leading qualifier in legacy remote data is safe to discard.
+    data.in[g.id] = (legacy.in[g.id] ?? []).map((id) => machine && id.includes("/") ? id.slice(id.indexOf("/") + 1) : id);
+  }
+  data.defaultFolded = Boolean(legacy.defaultFolded[machine ?? ""]);
+  return normalizeMachineData(data, machine);
+}
+
+function hasLegacyData(data) {
+  return Boolean(data.groups.length || data.defaultFolded || Object.values(data.in).some((list) => list.length));
+}
+
+function migrationMarks() {
+  const marks = shared(MIGRATED_KEY);
+  return marks && typeof marks === "object" && !Array.isArray(marks) ? { ...marks } : {};
+}
+
+function migrationDone(machine) {
+  return Boolean(migrationMarks()[machine ?? ""]);
+}
+
+function markMigrationDone(machine) {
+  const marks = migrationMarks();
+  marks[machine ?? ""] = Date.now();
+  setShared(MIGRATED_KEY, marks);
+}
+
+function resetMigrationDone(machine) {
+  const marks = migrationMarks();
+  delete marks[machine ?? ""];
+  setShared(MIGRATED_KEY, marks);
+}
+
+
+function docVersions() {
+  const versions = shared(VERSIONS_KEY);
+  return versions && typeof versions === "object" && !Array.isArray(versions) ? { ...versions } : {};
+}
+
+function rememberedDocVersion(machine) {
+  const version = docVersions()[machine ?? ""];
+  return typeof version === "number" && version > 0 ? version : 0;
+}
+
+function rememberDocVersion(machine, version) {
+  if (!(version > 0) || version <= rememberedDocVersion(machine)) return;
+  const versions = docVersions();
+  versions[machine ?? ""] = version;
+  setShared(VERSIONS_KEY, versions);
+}
+
+function resetRememberedDocVersion(machine) {
+  const versions = docVersions();
+  if (!Object.prototype.hasOwnProperty.call(versions, machine ?? "")) return;
+  delete versions[machine ?? ""];
+  setShared(VERSIONS_KEY, versions);
+}
+
+function memberOfAnyGroup(data, id) {
+  for (const list of Object.values(data.in)) if (list.includes(id)) return true;
+  return false;
+}
+
+// Merge one client's old local groups into the machine document exactly once.
+// Same-named groups are treated as the same group: independently generated old
+// ids cannot be matched any better, and duplicating them would be worse. Remote
+// membership wins when a space is already claimed.
+function mergeLegacyData(data, legacy) {
+  let changed = false;
+  for (const legacyGroup of legacy.groups) {
+    let target = data.groups.find((g) => g.id === legacyGroup.id)
+      ?? data.groups.find((g) => g.name === legacyGroup.name);
+    if (!target) {
+      target = { id: legacyGroup.id, name: legacyGroup.name, folded: Boolean(legacyGroup.folded) };
+      data.groups.push(target);
+      data.in[target.id] = [];
+      changed = true;
+    }
+    const list = data.in[target.id] ??= [];
+    for (const id of legacy.in[legacyGroup.id] ?? []) {
+      if (memberOfAnyGroup(data, id)) continue;
+      list.push(id);
+      changed = true;
+    }
+  }
+  // A written document's false is an intentional state, not merely a missing
+  // value. Only the first migration onto an unwritten document carries the old
+  // default group's fold flag over.
+  if (legacy.defaultFolded && !data.defaultFolded && !data.at) {
+    data.defaultFolded = true;
+    changed = true;
+  }
+  return changed ? data : null;
+}
+
+const groupSync = {
+  started: false,
+  generation: 0,
+  owners: new Set(), // main copies using the shared worker; prompts/menus do not count
+  stores: new Map(), // machine name/null -> canonical cache, queue and core version
+  wake: null,
+  notify: null,
+  polling: false,
+  rpcWarned: false,
+};
+
+function wakeGroupSync() {
+  groupSync.wake?.();
+}
+
+function queueMigration(st) {
+  if (checking() || migrationDone(st.machine)) return;
+  if (!hasLegacyData(st.legacy)) {
+    markMigrationDone(st.machine);
+    return;
+  }
+  if (st.migrateQueued) return;
+  st.migrateQueued = true;
+  const legacy = copyMachineData(st.legacy);
+  st.queue.push({
+    id: `migration-${st.machine ?? "local"}`,
+    intent: { type: "migration", legacy },
+    label: "migrate legacy groups",
+    migration: true,
+    apply: (data) => applyGroupIntent(st.machine, { type: "migration", legacy }, data),
+  });
+  wakeGroupSync();
+}
+
+function machineStore(machine) {
+  machine = machine ?? null;
+  let st = groupSync.stores.get(machine);
+  if (st) return st;
+  const legacy = legacyMachineData(machine);
+  st = {
+    machine,
+    legacy,
+    data: copyMachineData(legacy),
+    version: 0,
+    loaded: false,
+    queue: [],
+    active: null,
+    retryAt: 0,
+    refreshAfter: 0,
+    migrateQueued: false,
+    regressionSince: 0,
+    error: null,
+    errorKind: null,
+    errorUnavailable: false,
+  };
+  groupSync.stores.set(machine, st);
+  queueMigration(st);
+  restorePendingGroupOps(st);
+  return st;
+}
+
+function syncMachineNames() {
+  const out = [];
+  const seen = new Set();
+  const add = (machine) => {
+    machine = machine ?? null;
+    if (seen.has(machine)) return;
+    seen.add(machine);
+    out.push(machine);
+  };
+  add(null);
+  for (const g of readLegacyShared().groups) add(g.machine ?? null);
+  for (const m of machines()) add(m.name ?? null);
+  for (const s of spaces()) add(s.machine ?? null);
+  for (const machine of groupSync.stores.keys()) add(machine);
+  return out;
+}
+
+// The renderer still reads one synchronous aggregate in the old shape. It is a
+// view over the per-machine caches; canonical ids become this client's ids here.
+function readStore() {
+  const out = { groups: [], in: {}, defaultFolded: {} };
+  const groupIds = new Set();
+  for (const machine of syncMachineNames()) {
+    const st = machineStore(machine);
+    for (const g of st.data.groups) {
+      if (groupIds.has(g.id)) continue;
+      groupIds.add(g.id);
+      out.groups.push({ id: g.id, name: g.name, machine, folded: Boolean(g.folded) });
+      out.in[g.id] = (st.data.in[g.id] ?? []).map((id) => clientSpaceId(id, machine));
+    }
+    out.defaultFolded[machine ?? ""] = Boolean(st.data.defaultFolded);
+  }
+  return out;
+}
+
+function legacySignature(raw) {
+  return JSON.stringify({
+    groups: Array.isArray(raw.groups) ? raw.groups : [],
+    in: raw.in && typeof raw.in === "object" && !Array.isArray(raw.in) ? raw.in : {},
+    defaultFolded: raw.defaultFolded && typeof raw.defaultFolded === "object" && !Array.isArray(raw.defaultFolded) ? raw.defaultFolded : {},
+  });
+}
+
+// Keep the old client-local snapshot as a backup and compatibility fallback.
+// The core document is authoritative once written; this is what lets an old or
+// temporarily unreachable core behave exactly like the previous Kent release.
+let writingLegacySnapshot = false;
+
+function writeLegacySnapshot() {
+  if (checking() || writingLegacySnapshot) return;
+  writingLegacySnapshot = true;
+  try {
+    const data = readStore();
+    const next = { version: 1, groups: data.groups, in: data.in, defaultFolded: data.defaultFolded, at: Date.now() };
+    if (legacySignature(shared(STORE) ?? {}) === legacySignature(next)) return;
+    setShared(STORE, next);
+  } finally {
+    writingLegacySnapshot = false;
+  }
+}
+
+// User operations are serializable intents rather than closures. The queue can
+// therefore survive an app restart and, just as importantly, be replayed against
+// the newest machine document instead of a stale snapshot.
+function applyGroupIntent(machine, intent, data) {
+  machine = machine ?? null;
+  switch (intent.type) {
+    case "migration":
+      return mergeLegacyData(data, normalizeMachineData(intent.legacy, machine));
+    case "create": {
+      // New operations have stable generated ids, unlike legacy migration data.
+      // Do not coalesce a same-named group here: a later assign intent still
+      // refers to this id, and merging the create away would silently drop it.
+      const before = JSON.stringify({ groups: data.groups, in: data.in });
+      let group = data.groups.find((g) => g.id === intent.id);
+      if (!group) {
+        group = { id: intent.id, name: intent.name, folded: false };
+        data.groups.push(group);
+        data.in[intent.id] = [];
+      }
+      if (intent.space) {
+        removeFromGroups(data, intent.space);
+        const list = data.in[group.id] ??= [];
+        if (!list.includes(intent.space)) list.push(intent.space);
+      }
+      pruneMachineData(data, machine);
+      return JSON.stringify({ groups: data.groups, in: data.in }) !== before ? data : null;
+    }
+    case "rename": {
+      const group = data.groups.find((g) => g.id === intent.id);
+      if (!group || group.name === intent.name) return null;
+      group.name = intent.name;
+      return data;
+    }
+    case "delete": {
+      const at = data.groups.findIndex((g) => g.id === intent.id);
+      if (at === -1) return null;
+      data.groups.splice(at, 1);
+      delete data.in[intent.id];
+      pruneMachineData(data, machine);
+      return data;
+    }
+    case "fold": {
+      if (intent.defaultGroup) {
+        if (data.defaultFolded === Boolean(intent.folded)) return null;
+        data.defaultFolded = Boolean(intent.folded);
+        return data;
+      }
+      const group = data.groups.find((g) => g.id === intent.id);
+      if (!group || group.folded === Boolean(intent.folded)) return null;
+      group.folded = Boolean(intent.folded);
+      return data;
+    }
+    case "move": {
+      const at = data.groups.findIndex((g) => g.id === intent.id);
+      if (at === -1 || !data.groups.some((g) => g.id === intent.anchor)) return null;
+      const before = data.groups.map((g) => g.id).join("\u0000");
+      const [group] = data.groups.splice(at, 1);
+      const anchorAt = data.groups.findIndex((g) => g.id === intent.anchor);
+      data.groups.splice(anchorAt + (intent.afterAnchor ? 1 : 0), 0, group);
+      return data.groups.map((g) => g.id).join("\u0000") !== before ? data : null;
+    }
+    case "assign": {
+      if (intent.targetGroup && !data.groups.some((g) => g.id === intent.targetGroup)) return null;
+      const before = JSON.stringify(data.in);
+      removeFromGroups(data, intent.space);
+      if (intent.targetGroup) {
+        const list = data.in[intent.targetGroup] ??= [];
+        const at = intent.targetId ? list.indexOf(intent.targetId) : -1;
+        if (at === -1) list.push(intent.space);
+        else list.splice(at + (intent.after ? 1 : 0), 0, intent.space);
+      }
+      pruneMachineData(data, machine);
+      return JSON.stringify(data.in) !== before ? data : null;
+    }
+    case "prune": {
+      const before = JSON.stringify(data.in);
+      pruneMachineData(data, machine);
+      return JSON.stringify(data.in) !== before ? data : null;
+    }
+    default:
+      throw new Error(`unknown group operation ${intent.type}`);
+  }
+}
+
+function pendingGroupOps() {
+  const pending = shared(PENDING_KEY);
+  return pending && typeof pending === "object" && !Array.isArray(pending) ? { ...pending } : {};
+}
+
+function writePendingGroupOps(pending) {
+  setShared(PENDING_KEY, pending);
+}
+
+function persistGroupOp(machine, op) {
+  const key = machine ?? "";
+  const pending = pendingGroupOps();
+  const list = Array.isArray(pending[key]) ? [...pending[key]] : [];
+  if (!list.some((entry) => entry?.id === op.id)) list.push({ id: op.id, intent: op.intent, at: Date.now() });
+  pending[key] = list;
+  writePendingGroupOps(pending);
+}
+
+function clearPendingGroupOp(machine, id) {
+  const key = machine ?? "";
+  const pending = pendingGroupOps();
+  const list = Array.isArray(pending[key]) ? [...pending[key]] : [];
+  const kept = list.filter((entry) => entry?.id !== id);
+  if (kept.length) pending[key] = kept;
+  else delete pending[key];
+  writePendingGroupOps(pending);
+}
+
+
+function legacyGroupIdMap(legacy, data) {
+  const map = {};
+  for (const legacyGroup of legacy?.groups ?? []) {
+    if (!legacyGroup?.id || data.groups.some((g) => g.id === legacyGroup.id)) continue;
+    const target = data.groups.find((g) => g.name === legacyGroup.name);
+    if (target) map[legacyGroup.id] = target.id;
+  }
+  return map;
+}
+
+function remapGroupIntent(intent, map) {
+  const next = { ...intent };
+  if ((next.type === "create" || next.type === "rename" || next.type === "delete" || next.type === "fold" || next.type === "move") && map[next.id]) next.id = map[next.id];
+  if (next.type === "move" && map[next.anchor]) next.anchor = map[next.anchor];
+  if (next.type === "assign" && map[next.targetGroup]) next.targetGroup = map[next.targetGroup];
+  return next;
+}
+
+function rewriteQueuedGroupOps(st, map) {
+  if (!Object.keys(map).length) return;
+  for (const op of st.queue) {
+    if (op.intent?.type !== "migration") op.intent = remapGroupIntent(op.intent, map);
+  }
+  const key = st.machine ?? "";
+  const pending = pendingGroupOps();
+  const list = Array.isArray(pending[key]) ? pending[key].map((entry) => entry ? { ...entry } : entry) : [];
+  for (const entry of list) if (entry?.intent) entry.intent = remapGroupIntent(entry.intent, map);
+  if (list.length) pending[key] = list;
+  writePendingGroupOps(pending);
+}
+
+function finishMigration(st, op, data) {
+  rewriteQueuedGroupOps(st, legacyGroupIdMap(op.intent?.legacy, data));
+  markMigrationDone(st.machine);
+  st.migrateQueued = false;
+}
+
+function applyGroupOp(op, data) {
+  try { return op.apply(data); }
+  catch (e) {
+    console.log(`kent: group ${op.label ?? "change"} failed to apply: ${e.message ?? e}`);
+    return null;
+  }
+}
+
+function enqueueGroupOp(machine, intent, {
+  label = "change",
+  persist = true,
+  id = null,
+} = {}) {
+  const st = machineStore(machine);
+  const op = {
+    id: id ?? `op${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
+    intent,
+    label,
+    migration: false,
+    apply: null,
+  };
+  op.apply = (data) => applyGroupIntent(machine, op.intent, data);
+  const draft = copyMachineData(st.data);
+  const next = applyGroupOp(op, draft);
+  // Even a local no-op is still queued. The cache can be behind another
+  // client, and the user's intent must be replayed against the canonical
+  // document rather than discarded because a stale snapshot already matches.
+  // Persist before touching the compatibility snapshot: even a crash between
+  // those two writes must leave behind enough information to replay the intent.
+  if (persist) persistGroupOp(machine, op);
+  if (next) {
+    st.data = normalizeMachineData(next, st.machine);
+    // Restored operations are already persisted and are often reconstructed
+    // while a render is reading the store. Avoid a nested shared-state write
+    // there; normal user operations still update the compatibility snapshot.
+    if (persist) writeLegacySnapshot();
+  }
+  st.queue.push(op);
+  wakeGroupSync();
+  groupSync.notify?.();
+  return true;
+}
+
+function restorePendingGroupOps(st) {
+  const list = pendingGroupOps()[st.machine ?? ""];
+  if (!Array.isArray(list)) return;
+  const seen = new Set();
+  for (const entry of list) {
+    if (!entry || typeof entry.id !== "string" || seen.has(entry.id) || !entry.intent || typeof entry.intent !== "object") continue;
+    seen.add(entry.id);
+    // The compatibility snapshot often already contains this operation's effect.
+    // Queue it anyway: that proves nothing about the canonical machine document.
+    enqueueGroupOp(st.machine, entry.intent, {
+      label: entry.intent.type ?? "change",
+      persist: false,
+      id: entry.id,
+    });
+  }
+}
+
+let rpcSerial = 0;
+
+async function pipeToHcConnect(input) {
+  if (window()?.platform === "windows") {
+    // The payload is ASCII-encoded below, and every JSON-RPC request line
+    // starts with `{"jsonrpc"`, so a PowerShell here-string carries it without
+    // depending on the quoting of a native command-line argument.
+    const command = `$payload = @'\n${input}'@\n$payload | hc connect`;
+    return exec("powershell", ["-NoProfile", "-Command", command], { timeout: 15000 });
+  }
+  return exec("sh", ["-c", 'printf %s "$0" | hc connect', input], { timeout: 15000 });
+}
+
+// hc's document API is newline JSON-RPC over `hc connect`. exec has no stdin,
+// so the payload is passed as one argument and a tiny shell pipeline feeds it in.
+async function coreRpc(calls) {
+  const requests = calls.map((call) => ({ jsonrpc: "2.0", id: ++rpcSerial, ...call }));
+  // Keep the wire bytes ASCII: group names may be Unicode, while PowerShell's
+  // native-command pipeline encoding differs between Windows PowerShell editions.
+  const asciiJson = (value) => JSON.stringify(value).replace(/[\u0080-\uffff]/g, (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"));
+  const input = requests.map((request) => asciiJson(request)).join("\n") + "\n";
+  const r = await pipeToHcConnect(input);
+  if (r.code !== 0) throw new Error(r.stderr || r.stdout || `hc connect exited ${r.code}`);
+  const byId = new Map();
+  for (const line of r.stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const response = JSON.parse(line.replace(/^\uFEFF/, ""));
+    if (response.id !== undefined) byId.set(response.id, response);
+  }
+  return requests.map((request) => byId.get(request.id));
+}
+
+function unwrapRpc(response) {
+  if (!response) throw new Error("herdr-core did not answer");
+  if (response.error) {
+    const e = new Error(response.error.message || response.error.data?.kind || "herdr-core request failed");
+    e.kind = response.error.data?.kind;
+    e.code = response.error.code;
+    if (e.kind === "needs_update" || e.code === -32601) e.unsupported = true;
+    throw e;
+  }
+  return response.result;
+}
+
+async function docGet(machine) {
+  const [response] = await coreRpc([{ method: "doc.get", params: { name: GROUP_DOC, on: machine ?? null } }]);
+  return unwrapRpc(response);
+}
+
+async function docSet(machine, value, version) {
+  const [response] = await coreRpc([{ method: "doc.set", params: { name: GROUP_DOC, on: machine ?? null, value, version } }]);
+  return unwrapRpc(response);
+}
+
+function isConflict(e) {
+  return e.kind === "conflict" || /conflict|version/i.test(e.message ?? "");
+}
+
+function rebuildOptimistic(st, authoritative) {
+  let data = copyMachineData(authoritative);
+  const pending = [...(st.active ? [st.active] : []), ...st.queue];
+  for (const op of pending) {
+    const next = applyGroupOp(op, copyMachineData(data));
+    if (next) data = normalizeMachineData(next, st.machine);
+  }
+  return data;
+}
+
+function queueCoreResetRepair(st) {
+  // Reset the migration marker first: if the app dies halfway through this
+  // repair, the compatibility snapshot must be eligible to migrate again.
+  resetMigrationDone(st.machine);
+  resetRememberedDocVersion(st.machine);
+  const repair = copyMachineData(st.data);
+  if (!hasLegacyData(repair)) {
+    markMigrationDone(st.machine);
+    return false;
+  }
+  st.queue.unshift({
+    id: `repair-${st.machine ?? "local"}-${Date.now().toString(36)}`,
+    intent: { type: "migration", legacy: repair },
+    label: "restore groups after core reset",
+    migration: true,
+    apply: (data) => applyGroupIntent(st.machine, { type: "migration", legacy: repair }, data),
+  });
+  wakeGroupSync();
+  return true;
+}
+
+function adoptRemote(st, authoritative, version) {
+  // Two `hc connect` processes can answer out of order. Never rewind to an
+  // older document version merely because a slow poll finished after a write.
+  // The remembered version extends that protection across an app restart; it
+  // is reset when a sustained regression proves the core is a new incarnation.
+  const remembered = rememberedDocVersion(st.machine);
+  const knownVersion = Math.max(st.loaded ? st.version : 0, remembered);
+  let reset = false;
+  if (knownVersion && version < knownVersion) {
+    if (!st.regressionSince) {
+      st.regressionSince = Date.now();
+      return;
+    }
+    if (Date.now() - st.regressionSince < SYNC_RESET_GRACE) return;
+    // A sustained regression means this is a different core incarnation (for
+    // example a rebuilt machine), not a stale response. Repair it from the
+    // current optimistic cache. Resetting the migration marker also makes the
+    // compatibility snapshot migrate again if the app restarts before repair.
+    reset = true;
+    st.regressionSince = 0;
+    queueCoreResetRepair(st);
+  } else st.regressionSince = 0;
+  const before = JSON.stringify({ groups: st.data.groups, in: st.data.in, defaultFolded: st.data.defaultFolded });
+  st.version = version;
+  st.loaded = true;
+  st.error = null;
+  st.errorKind = null;
+  st.errorUnavailable = false;
+  st.data = rebuildOptimistic(st, authoritative);
+  if (reset || version > remembered) rememberDocVersion(st.machine, version);
+  const after = JSON.stringify({ groups: st.data.groups, in: st.data.in, defaultFolded: st.data.defaultFolded });
+  // The shared snapshot is only a fallback/migration source, but keeping it
+  // current is what lets Kent behave like the old local version while a core
+  // is unreachable or too old for documents.
+  if (after !== before) writeLegacySnapshot();
+}
+
+async function processGroupOp(st, op) {
+  let conflict = null;
+  for (let attempt = 0; attempt < SYNC_CONFLICTS; attempt += 1) {
+    const current = await docGet(st.machine);
+    const remote = normalizeMachineData(current.value, st.machine);
+    // Unlike a poll response, this read was issued now. A version below every
+    // incarnation this client remembers is definitive proof of a core reset,
+    // so repair before writing this operation onto an empty new document.
+    const knownVersion = Math.max(st.loaded ? st.version : 0, rememberedDocVersion(st.machine));
+    if (knownVersion && current.version < knownVersion) {
+      st.queue.unshift(op);
+      queueCoreResetRepair(st);
+      st.version = current.version;
+      st.loaded = true;
+      st.error = null;
+      st.regressionSince = 0;
+      st.data = rebuildOptimistic(st, remote);
+      rememberDocVersion(st.machine, current.version);
+      return;
+    }
+    const draft = copyMachineData(remote);
+    const next = applyGroupOp(op, draft);
+    if (!next) {
+      adoptRemote(st, remote, current.version);
+      clearPendingGroupOp(st.machine, op.id);
+      if (op.migration) finishMigration(st, op, remote);
+      return;
+    }
+    const clean = normalizeMachineData(next, st.machine);
+    clean.at = Date.now();
+    try {
+      const written = await docSet(st.machine, clean, current.version);
+      adoptRemote(st, clean, written.version);
+      clearPendingGroupOp(st.machine, op.id);
+      if (op.migration) finishMigration(st, op, clean);
+      return;
+    } catch (e) {
+      if (!isConflict(e)) throw e;
+      conflict = e;
+    }
+  }
+  throw conflict ?? new Error("group sync kept conflicting");
+}
+
+function nextQueuedGroupOp() {
+  const now = Date.now();
+  for (const st of groupSync.stores.values()) {
+    if ((st.retryAt ?? 0) > now) continue;
+    if (st.queue.length) return { st, op: st.queue.shift() };
+  }
+  return null;
+}
+
+function hasQueuedGroupOps() {
+  for (const st of groupSync.stores.values()) if (st.queue.length) return true;
+  return false;
+}
+
+async function groupMutationWorker(cx, generation) {
+  for (;;) {
+    if (groupSync.generation !== generation) return;
+    const next = nextQueuedGroupOp();
+    if (!next) {
+      if (hasQueuedGroupOps()) await cx.sleep(500);
+      else {
+        await new Promise((resolve) => { groupSync.wake = resolve; });
+        groupSync.wake = null;
+      }
+      continue;
+    }
+    next.st.active = next.op;
+    try {
+      await processGroupOp(next.st, next.op);
+    } catch (e) {
+      const message = String(e.message ?? e);
+      if (next.st.error !== message) console.log(`kent: group sync failed for ${next.st.machine ?? "this computer"}: ${message}`);
+      next.st.error = message;
+      // Even an old core is treated as a temporary sync failure: the operation
+      // stays queued and the local shared snapshot remains the compatibility
+      // copy. This both avoids losing a migration and lets sync recover after
+      // that machine's core is updated, without an app restart.
+      next.st.queue.unshift(next.op);
+      const unavailable = machines().find((m) => (m.name ?? null) === next.st.machine)?.layout === "unavailable";
+      next.st.errorKind = e.kind ?? null;
+      next.st.errorUnavailable = unavailable;
+      const slow = e.unsupported || e.kind === "machine_unknown" || unavailable;
+      next.st.retryAt = Date.now() + (slow ? SYNC_UNSUPPORTED_RETRY : SYNC_RETRY);
+      if (e.unsupported) next.st.refreshAfter = next.st.retryAt;
+    } finally {
+      if (next.st.active === next.op) next.st.active = null;
+    }
+    cx.notify();
+  }
+}
+
+function pollError(st, e) {
+  st.error = String(e.message ?? e);
+  st.errorKind = e.kind ?? null;
+  const slow = e.unsupported || e.kind === "machine_unknown";
+  st.refreshAfter = Date.now() + (slow ? SYNC_UNSUPPORTED_RETRY : SYNC_RETRY);
+}
+
+function refreshGroupDocs(cx) {
+  if (checking() || groupSync.polling || window()?.visible === false) return;
+  const now = Date.now();
+  const layoutByMachine = new Map(machines().map((m) => [m.name ?? null, m.layout]));
+  for (const st of groupSync.stores.values()) {
+    // Recovery from being offline/unknown should be visible within one poll
+    // interval, not after the long failure backoff. Persistent local RPC or
+    // unsupported-core failures keep their backoff because layout readiness
+    // does not make them any more likely to succeed.
+    if (layoutByMachine.get(st.machine) === "ready" && (st.errorUnavailable || st.errorKind === "machine_unknown")) {
+      st.retryAt = 0;
+      st.refreshAfter = 0;
+      st.errorUnavailable = false;
+      st.errorKind = null;
+    }
+  }
+  const targets = syncMachineNames()
+    .map((machine) => machineStore(machine))
+    .filter((st) => {
+      if ((st.refreshAfter ?? 0) > now) return false;
+      // A machine whose layout core is already known to be offline can make one
+      // batched RPC wait for its network timeout and delay every other machine.
+      // Leave its queued intents to the mutation retry path and poll it later.
+      if (layoutByMachine.get(st.machine) === "unavailable") {
+        st.refreshAfter = now + SYNC_RETRY;
+        return false;
+      }
+      return true;
+    });
+  if (!targets.length) return;
+  groupSync.polling = true;
+  cx.spawn(async (cx) => {
+    try {
+      try {
+        const responses = await coreRpc(targets.map((st) => ({
+          method: "doc.get",
+          params: { name: GROUP_DOC, on: st.machine ?? null },
+        })));
+        targets.forEach((st, i) => {
+          try {
+            const result = unwrapRpc(responses[i]);
+            adoptRemote(st, normalizeMachineData(result.value, st.machine), result.version);
+            st.refreshAfter = 0;
+          } catch (e) { pollError(st, e); }
+        });
+      } catch (e) {
+        if (!groupSync.rpcWarned) {
+          console.log(`kent: group sync poll failed: ${e.message ?? e}`);
+          groupSync.rpcWarned = true;
+        }
+        for (const st of targets) st.refreshAfter = Date.now() + SYNC_RETRY;
+      }
+    } finally {
+      groupSync.polling = false;
+      cx.notify();
+    }
+  });
+}
+
+function startGroupSync(cx) {
+  if (checking()) return;
+  if (groupSync.started) {
+    if (Date.now() - (groupSync.heartbeat ?? 0) < SYNC_STALE) return;
+    stopGroupSync();
+  }
+  groupSync.started = true;
+  groupSync.heartbeat = Date.now();
+  const generation = ++groupSync.generation;
+  groupSync.notify = () => {
+    if (groupSync.generation === generation) cx.notify();
+  };
+  cx.spawn(async (cx) => groupMutationWorker(cx, generation));
+  cx.timer.every(SYNC_EVERY, (cx) => {
+    if (groupSync.generation !== generation) return;
+    groupSync.heartbeat = Date.now();
+    refreshGroupDocs(cx);
+  });
+  refreshGroupDocs(cx);
+}
+
+function stopGroupSync() {
+  if (!groupSync.started) return;
+  groupSync.started = false;
+  groupSync.generation += 1;
+  groupSync.notify = null;
+  wakeGroupSync();
+}
+
+// Closed spaces leave their ids behind in group membership. Prune them only
+// when this machine's layout is definitely answering; an away or still-loading
+// machine keeps every id because its spaces simply aren't here to ask.
+function pruneMachineData(data, machine, sp = spaces(), ms = machines(), busyMachines = new Set(spaceCreations.keys())) {
+  if (checking()) return false;
+  machine = machine ?? null;
+  if (busyMachines.has(machine)) return false;
+  const entry = ms.find((m) => (m.name ?? null) === machine);
+  if (!entry || entry.layout !== "ready") return false;
+  const live = new Set(sp.filter((s) => (s.machine ?? null) === machine).map((s) => bareSpaceId(s.id, machine)));
+  if (!live.size && Date.now() - startedAt < STARTUP_GRACE) return false;
+  let removed = false;
+  for (const g of data.groups) {
+    const list = data.in[g.id];
+    if (!Array.isArray(list)) continue;
+    const kept = list.filter((id) => live.has(id));
+    if (kept.length !== list.length) {
+      data.in[g.id] = kept;
+      removed = true;
+    }
+  }
+  return removed;
+}
+
+function queueNewSpaceInGroup(id, machine = null) {
+  pendingGroupSpaces.push({ id, machine, at: Date.now() });
+  wakeGroupSpaces?.();
+}
+
+function defaultGroupFor(machine, data) {
+  return {
+    id: DEFAULT_GROUP,
+    name: "default",
+    machine: machine ?? null,
+    folded: Boolean(data.defaultFolded?.[machine ?? ""]),
+    virtual: true,
+  };
 }
 
 function removeFromGroups(data, id) {
@@ -255,6 +1089,8 @@ export default class Spaces extends View {
     } catch { this.reconnecting = {}; }
     try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
     if (!checking()) {
+      groupSync.owners.add(this);
+      startGroupSync(cx);
       this.refreshMachines(cx);
       cx.timer.every(15000, cx => this.refreshMachines(cx));
       // Refresh only when the refs could have changed (see `due`).
@@ -296,17 +1132,17 @@ export default class Spaces extends View {
   }
 
   checkNew(cx) {
+    startGroupSync(cx);
     const now = Date.now();
     const sp = spaces();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     const due = this.due(now, sp, panes());
     if (due.size) this.refreshGit(due, cx);
     // Dead ids are pruned here at most once a minute, and inline with every
-    // membership write; writeStore only happens when something was removed.
+    // membership write; a core write only happens when something was removed.
     if (now - (this.prunedAt ?? 0) > PRUNE_EVERY) {
       this.prunedAt = now;
-      const data = readStore();
-      if (this.pruneStoreData(data)) writeStore(data);
+      this.pruneStoreData();
     }
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
   }
@@ -402,6 +1238,12 @@ export default class Spaces extends View {
         if (machine.session) args.push("--session", machine.session);
         if (machine.temporary) args.push("--temp");
         await ask(args);
+        // A rebuilt machine has a new core and therefore an empty group
+        // document. Let the compatibility snapshot migrate onto it again;
+        // pending intents stay queued and replay harmlessly on top.
+        groupSync.stores.delete(name);
+        resetMigrationDone(name);
+        resetRememberedDocVersion(name);
         this.folded.delete(name);
         localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
         delete this.reconnecting[name];
@@ -506,11 +1348,37 @@ export default class Spaces extends View {
     return data.groups.filter((g) => (g.machine ?? null) === (machine ?? null));
   }
 
-  // Prune dead space ids from a freshly read store. Machines with a space
-  // creation still in flight are skipped: their membership is about to change.
-  pruneStoreData(data) {
-    const busy = new Set((this.newSpaceRequests ?? []).map((r) => r.machine ?? null));
-    return pruneStore(data, spaces(), machines(), busy);
+  machineOfGroup(id, data = readStore()) {
+    const group = data.groups.find((g) => g.id === id);
+    return group ? (group.machine ?? null) : undefined;
+  }
+
+  machineForSpace(spaceId, targetGroup = null) {
+    const space = spaces().find((s) => s.id === spaceId);
+    if (space) return space.machine ?? null;
+    if (targetGroup) {
+      const machine = this.machineOfGroup(targetGroup);
+      if (machine !== undefined) return machine;
+    }
+    for (const machine of syncMachineNames()) {
+      if (machine && spaceId.startsWith(`${machine}/`)) return machine;
+    }
+    return null;
+  }
+
+  // Prune dead canonical ids machine by machine. Each operation is small and
+  // returns null when the machine is offline or nothing is dead, so the core
+  // document is not rewritten merely because the timer fired.
+  pruneStoreData() {
+    let queued = false;
+    for (const st of [...groupSync.stores.values()]) {
+      if (!st.data.groups.length) continue;
+      const machine = st.machine;
+      const draft = copyMachineData(st.data);
+      if (!pruneMachineData(draft, machine)) continue;
+      queued = enqueueGroupOp(machine, { type: "prune" }, { label: "prune closed spaces" }) || queued;
+    }
+    return queued;
   }
 
   groupOf(spaceId, machine, data = readStore()) {
@@ -522,91 +1390,76 @@ export default class Spaces extends View {
   }
 
   createGroup(name, machine, spaceId = null) {
-    const data = readStore();
+    machine = machine ?? null;
     const id = groupId();
-    data.groups.push({ id, name, machine: machine ?? null, folded: false });
-    data.in[id] = [];
-    if (spaceId) {
-      removeFromGroups(data, spaceId);
-      data.in[id].push(spaceId);
-    }
-    this.pruneStoreData(data);
-    writeStore(data);
+    const bare = spaceId ? bareSpaceId(spaceId, machine) : null;
+    enqueueGroupOp(machine, { type: "create", id, name, space: bare }, { label: "create group" });
   }
 
   renameGroup(id, name) {
-    const data = readStore();
-    const group = data.groups.find((g) => g.id === id);
-    if (!group) return;
-    group.name = name;
-    writeStore(data);
+    const machine = this.machineOfGroup(id);
+    if (machine === undefined) return;
+    enqueueGroupOp(machine, { type: "rename", id, name }, { label: "rename group" });
   }
 
   deleteGroup(id) {
-    const data = readStore();
-    const at = data.groups.findIndex((g) => g.id === id);
-    if (at === -1) return;
-    data.groups.splice(at, 1);
-    delete data.in[id];
-    this.pruneStoreData(data);
-    writeStore(data);
+    const machine = this.machineOfGroup(id);
+    if (machine === undefined) return;
+    enqueueGroupOp(machine, { type: "delete", id }, { label: "delete group" });
   }
 
   toggleGroup(id, machine = null) {
-    const data = readStore();
     if (id === DEFAULT_GROUP) {
-      const key = machine ?? "";
-      if (data.defaultFolded[key]) delete data.defaultFolded[key];
-      else data.defaultFolded[key] = true;
-      writeStore(data);
+      machine = machine ?? null;
+      const wanted = !machineStore(machine).data.defaultFolded;
+      enqueueGroupOp(machine, { type: "fold", defaultGroup: true, folded: wanted }, { label: "fold default group" });
       return;
     }
-    const group = data.groups.find((g) => g.id === id);
-    if (!group) return;
-    group.folded = !group.folded;
-    writeStore(data);
+    machine = this.machineOfGroup(id);
+    if (machine === undefined) return;
+    const current = machineStore(machine).data.groups.find((g) => g.id === id);
+    if (!current) return;
+    const wanted = !current.folded;
+    enqueueGroupOp(machine, { type: "fold", id, folded: wanted }, { label: "fold group" });
   }
 
   moveGroup(id, dir) {
-    const data = readStore();
-    const at = data.groups.findIndex((g) => g.id === id);
-    if (at === -1) return;
-    const machine = data.groups[at].machine ?? null;
-    const positions = data.groups.map((g, i) => ((g.machine ?? null) === machine ? i : -1)).filter((i) => i !== -1);
-    const own = positions.indexOf(at);
-    const swap = positions[own + dir];
-    if (swap === undefined) return;
-    [data.groups[at], data.groups[swap]] = [data.groups[swap], data.groups[at]];
-    writeStore(data);
+    const machine = this.machineOfGroup(id);
+    if (machine === undefined) return;
+    const current = machineStore(machine).data.groups;
+    const from = current.findIndex((g) => g.id === id);
+    const wanted = from + dir;
+    if (from === -1 || wanted < 0 || wanted >= current.length) return;
+    // Capture the neighbour this move swaps past, not merely an absolute index.
+    // Retrying against a newer document can then survive independent inserts or
+    // deletes elsewhere in the list without landing in the wrong place.
+    const anchor = current[wanted].id;
+    const afterAnchor = dir > 0;
+    enqueueGroupOp(machine, { type: "move", id, anchor, afterAnchor }, { label: "move group" });
   }
 
   assignToGroup(spaceId, targetGroup, targetId = null, after = true) {
-    const data = readStore();
-    if (targetGroup && !data.groups.some((g) => g.id === targetGroup)) return;
-    removeFromGroups(data, spaceId);
-    if (targetGroup) {
-      const list = data.in[targetGroup] ??= [];
-      const at = targetId ? list.indexOf(targetId) : -1;
-      if (at === -1) list.push(spaceId);
-      else list.splice(at + (after ? 1 : 0), 0, spaceId);
-    }
-    this.pruneStoreData(data);
-    writeStore(data);
+    const machine = this.machineForSpace(spaceId, targetGroup);
+    const bare = bareSpaceId(spaceId, machine);
+    const bareTarget = targetId ? bareSpaceId(targetId, machine) : null;
+    enqueueGroupOp(machine, {
+      type: "assign",
+      space: bare,
+      targetGroup: targetGroup ?? null,
+      targetId: bareTarget,
+      after: Boolean(after),
+    }, { label: "assign group" });
   }
 
   setGroupFolded(id, machine, folded) {
-    const data = readStore();
     if (id === DEFAULT_GROUP) {
-      const key = machine ?? "";
-      if (folded) data.defaultFolded[key] = true;
-      else delete data.defaultFolded[key];
-      writeStore(data);
+      machine = machine ?? null;
+      enqueueGroupOp(machine, { type: "fold", defaultGroup: true, folded: Boolean(folded) }, { label: "fold default group" });
       return;
     }
-    const group = data.groups.find((g) => g.id === id);
-    if (!group) return;
-    group.folded = folded;
-    writeStore(data);
+    machine = machine ?? this.machineOfGroup(id);
+    if (machine === undefined) return;
+    enqueueGroupOp(machine, { type: "fold", id, folded: Boolean(folded) }, { label: "fold group" });
   }
 
   createdSpace(before, machine) {
@@ -615,19 +1468,24 @@ export default class Spaces extends View {
   }
 
   async createSpaceInGroup(request, cx) {
-    const before = new Set(spaces().map((space) => space.id));
-    run("space.new", { machine: request.machine ?? "", focus: true });
-    let created = this.createdSpace(before, request.machine);
-    // The document usually changes after the initiating event returns, not inside it.
-    // Wait on GPUI's foreground executor; setTimeout is not available to mods.
-    for (let attempt = 0; !created && attempt < 50; attempt += 1) {
-      await cx.sleep(100);
-      created = this.createdSpace(before, request.machine);
+    beginSpaceCreation(request.machine);
+    try {
+      const before = new Set(spaces().map((space) => space.id));
+      run("space.new", { machine: request.machine ?? "", focus: true });
+      let created = this.createdSpace(before, request.machine);
+      // The document usually changes after the initiating event returns, not inside it.
+      // Wait on GPUI's foreground executor; setTimeout is not available to mods.
+      for (let attempt = 0; !created && attempt < 50; attempt += 1) {
+        await cx.sleep(100);
+        created = this.createdSpace(before, request.machine);
+      }
+      if (!created) return;
+      this.assignToGroup(created.id, request.group);
+      if (request.unfold) this.setGroupFolded(request.group, request.machine, false);
+      cx.notify();
+    } finally {
+      endSpaceCreation(request.machine);
     }
-    if (!created) return;
-    this.assignToGroup(created.id, request.group);
-    if (request.unfold) this.setGroupFolded(request.group, request.machine, false);
-    cx.notify();
   }
 
   // Space creation does not return the new id. Serialize requests so a quick
@@ -675,6 +1533,7 @@ export default class Spaces extends View {
 
   close() {
     this.input?.release();
+    if (groupSync.owners.delete(this) && !groupSync.owners.size) stopGroupSync();
   }
 
   // Why the prompt can't be submitted right now: nothing but whitespace, or a

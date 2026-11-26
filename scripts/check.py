@@ -17,9 +17,11 @@ Run from anywhere with:
 from pathlib import Path
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PAIRS = [
@@ -67,10 +69,25 @@ def check_mods():
     if not binary:
         print("check: herdr-app not on PATH; skipping mod checks")
         return problems
-    for mod in MODS:
-        result = subprocess.run([binary, "check", str(ROOT / "mods" / mod)], text=True, capture_output=True)
-        if result.returncode != 0:
-            problems.append(f"herdr-app check mods/{mod} failed: {(result.stdout or result.stderr).strip()}")
+    # Even `herdr-app check` can otherwise share the person's running default
+    # core through the app holder. Keep the one-shot check in a disposable app
+    # home and core session so verifying Kent never disturbs the live window.
+    env = os.environ.copy()
+    with tempfile.TemporaryDirectory(prefix="kent-check-") as tmp:
+        env["HERDR_APP_HOME"] = tmp
+        env["HC_SESSION"] = f"kent-check-{os.getpid()}"
+        try:
+            for mod in MODS:
+                result = subprocess.run([binary, "check", str(ROOT / "mods" / mod)], text=True, capture_output=True, env=env)
+                if result.returncode != 0:
+                    problems.append(f"herdr-app check mods/{mod} failed: {(result.stdout or result.stderr).strip()}")
+        finally:
+            hc = shutil.which("hc")
+            if hc:
+                try:
+                    subprocess.run([hc, "server", "stop"], text=True, capture_output=True, env=env, timeout=10)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
     return problems
 
 

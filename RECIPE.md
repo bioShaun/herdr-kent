@@ -22,7 +22,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 - Right-click a space for a keyboard-navigable menu: Open, Rename — on git checkouts followed by Herdr's New worktree/Open worktree actions, plus Remove worktree on linked checkouts — then Move to default, one “Move to …” item for each named group on that machine, “Group this space…”, and Close space.
 - Right-click a named group to create a space in it, fold/unfold, rename, move it up or down, or delete it. Deleting a group never closes spaces; they simply return to `default`.
 - Click a group header to fold or unfold it. Its quiet `+` control creates a space directly inside that group; creating into a folded group unfolds it so the new row is visible. The command palette can also open “New space group” and “Group active space”.
-- Groups are per machine. Their names, folded state, membership, in-group order and per-machine `default` fold state persist in shared state as `kent.groups.v1` and redraw immediately.
+- Groups are per machine. Their names, folded state, membership, in-group order and per-machine `default` fold state persist in that machine's herdr-core document `kent.groups.v1`; clients connected to the same machine therefore see the same groups. The window redraws optimistically, writes with compare-and-set retries, and polls while visible for other clients' changes.
 - Worktree nesting, machine folding/reconnection, git branch details and the narrow numbered rail are inherited from Herdr's shipped `spaces` mod.
 - If `keys.json` is merged, `alt-down` / `alt-up` and `ctrl-shift-pagedown` / `ctrl-shift-pageup` move through spaces in the order Kent draws them, skipping folded rows.
 
@@ -30,7 +30,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 
 - **Layout** `layouts/kent.json`: a copy of Herdr's `main` structure. The sidebar is 232px, the Spaces block uses mod `kent` with weight 2, the Agents block uses `kent-agents` with weight 1. The root divider highlights in `accent` on hover so the drag-to-narrow edge is discoverable, and the Spaces/Agents boundary inside `sidebar-lists` carries a transparent divider that only shows its `accent` hover line. The root sets `"preview": "layouts/kent.png"` so the settings layout picker shows a real thumbnail. The root deliberately leaves `theme` and `colors` unset so the layout follows the person's settings and theme picks.
 - **Mod** `mods/kent/`: based on Herdr 0.1.18's shipped `spaces` mod. It keeps the git/worktree/machine logic and adds:
-  - the shared group store (`groups`, ordered `in` membership arrays),
+  - the per-machine core-document group store (`groups`, ordered `in` membership arrays), with legacy shared-state migration and fallback,
   - `machineRows` and `groupHead` rendering,
   - program-icon rows using `panes()` and `program.icon` / `image` / `svg`,
   - the generated visible-bound icon metrics and theme-aware pseudo-gradient chip described above,
@@ -44,7 +44,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 
 - Group membership is manual: Kent does not infer groups from name prefixes, folders or tags. Use the menu or drag and drop.
 - Groups cannot span machines. A group with the same name on two machines is two separate groups.
-- The store is local Herdr shared state. It survives restarts of this app, but it is not synchronized to another Herdr client or written into the remote machine's home.
+- When a machine is offline or its core does not support documents, Kent falls back to the previous client-local snapshot and keeps edits in a restart-safe pending queue; those edits sync when the machine/core becomes usable. Old client-local groups migrate once, with same-named legacy groups merged because they had no stable cross-client identity.
 - Ordering inside a named group belongs to Kent. Spaces in `default` still use Herdr's own space ordering.
 - In the narrow rail (sidebar below 160px), group labels collapse away and rows use the compact numbered presentation.
 - Icon metrics are pregenerated for the SVGs shipped with Herdr 0.1.18 rather than measured at runtime. `scripts/generate-icon-metrics.py` refreshes them after Herdr adds icons; unknown custom non-square icons still fall back to square fitting.
@@ -54,7 +54,7 @@ A compact, theme-aware Herdr layout for people who keep many spaces open. Its Sp
 ## Done when
 
 - New groups can be created from the folder-plus button or command palette, including Chinese names.
-- A space can be created inside a group, assigned, moved between groups, reordered in a group and returned to `default`; the state survives an app restart.
+- A space can be created inside a group, assigned, moved between groups, reordered in a group and returned to `default`; the state survives an app restart and synchronizes through each machine's core document.
 - Group headers fold, show the right counts, and keep blocked/done visible while folded.
 - The active space is clearly marked by selection and its accent indicator, and rows show the running program's icon rather than avatar letters.
 - Multiple machines still have their own headers and cannot accept cross-machine drops.

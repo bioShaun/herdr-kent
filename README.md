@@ -89,9 +89,12 @@ Kent does not hardcode a light or dark theme. It follows `settings.json`, the sy
 
 - Grouping is manual. Kent does not infer groups from path, prefix, or tags.
 - Groups cannot span machines. Same-named groups on two machines are independent.
-- Group state is stored locally in Herdr shared state under `kent.groups.v1`; it is not synchronized to other Herdr clients.
+- Group state is stored per machine in that machine's herdr-core document `kent.groups.v1`. Clients connected to the same machine share group definitions, membership, ordering, and fold state, even when they use different local aliases for that machine; membership is stored as machine-local space ids.
+- Writes are optimistic in the window and then written asynchronously with the core document's compare-and-set version. A conflict is reread and the intent is reapplied rather than blindly overwriting the other client's edit. Kent polls about every three seconds while visible, so another client's change can take a few seconds to appear.
+- If a machine is offline or its core is too old for document storage, Kent keeps the previous client-local behavior and queues edits locally. Queued intents survive app restarts and retry when the machine and core are available; until then those edits are not visible to other clients.
+- Existing client-local groups are migrated once into each machine document. Same-named legacy groups are merged because the old local-only data did not have stable cross-client identities; membership already present in the machine document wins. If several clients had divergent arrangements, review important groups after the first synchronized migration.
 - Ordering inside named groups belongs to Kent. Spaces in `default` continue to use Herdr's own ordering.
-- Kent was built and tested against Herdr 0.1.18.
+- Kent was built and tested against Herdr 0.1.18. Cross-client group synchronization requires a herdr-core new enough for machine-scoped documents (validated with 0.1.22); older cores use the client-local fallback.
 - Visible-bound metrics are generated for the SVG icons shipped with Herdr 0.1.18. Icons added by a future Herdr version can be measured again with `scripts/generate-icon-metrics.py`; unknown custom icons fall back to square fitting.
 
 ## Development
@@ -105,7 +108,14 @@ herdr-app check mods/kent
 herdr-app check mods/kent-agents
 ```
 
-Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with:
+Run the group synchronization unit harness, optionally with an isolated real-core document/CAS test (it uses a temporary `HC_SESSION` and does not touch the default core):
+
+```sh
+node scripts/test-group-sync.js
+node scripts/test-group-sync.js --core
+```
+
+Both mods keep their own copy of `icon-chip.js` and `icon-metrics.js`. After editing either copy, verify the pairs still match (and both mods still load) with the following command. Its `herdr-app check` runs use a temporary isolated app home/core session, so they do not disturb the running default Herdr core:
 
 ```sh
 python3 scripts/check.py
