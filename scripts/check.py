@@ -31,8 +31,12 @@ JSON_FILES = [
     ROOT / "layouts" / "kent.json",
     ROOT / "keys.json",
     ROOT / "mods" / "kent" / "mod.json",
-    ROOT / "mods" / "kent" / "jsconfig.json",
     ROOT / "mods" / "kent-agents" / "mod.json",
+]
+# Editor support files Herdr generates and .gitignore keeps out of the repository,
+# so a fresh clone has none: validate them when present, never require them.
+GENERATED_JSON = [
+    ROOT / "mods" / "kent" / "jsconfig.json",
     ROOT / "mods" / "kent-agents" / "jsconfig.json",
 ]
 MODS = ["kent", "kent-agents"]
@@ -44,8 +48,21 @@ def check_pairs():
         if not source.exists() or not copy.exists():
             problems.append(f"{name}: missing ({source if not source.exists() else copy})")
         elif source.read_bytes() != copy.read_bytes():
-            problems.append(f"{name}: {source.relative_to(ROOT)} and {copy.relative_to(ROOT)} differ (sync with: python3 scripts/check.py --sync)")
+            hint = (
+                "sync with: python3 scripts/check.py --sync"
+                if name == "icon-chip.js"
+                else "regenerate with: uv run --with svgpathtools python scripts/generate-icon-metrics.py"
+            )
+            problems.append(f"{name}: {source.relative_to(ROOT)} and {copy.relative_to(ROOT)} differ ({hint})")
     return problems
+
+
+def invalid_json(path):
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{path.relative_to(ROOT)}: invalid JSON: {exc}"]
+    return []
 
 
 def check_json():
@@ -54,10 +71,10 @@ def check_json():
         if not path.exists():
             problems.append(f"{path.relative_to(ROOT)}: missing")
             continue
-        try:
-            json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            problems.append(f"{path.relative_to(ROOT)}: invalid JSON: {exc}")
+        problems += invalid_json(path)
+    for path in GENERATED_JSON:
+        if path.exists():
+            problems += invalid_json(path)
     return problems
 
 

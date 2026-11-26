@@ -42,7 +42,7 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
     shared: (k) => sharedData[k],
     setShared: (k, v) => { sharedData[k] = v; },
     spaces: () => spacesList,
-    machines: () => machineList,
+    machines: () => machineList, // the other machines' layout documents: this computer has no entry
     panes: () => [],
     run: () => {},
     openOverlay: () => {}, closeOverlay: () => {}, props: () => null,
@@ -225,7 +225,7 @@ async function testMigrationMergesByNameAndRemoteWins() {
 
 async function testCreateConflictAndIdentity() {
   const core = fakeCore({ conflictOnce: true });
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp1', machine: null }];
   const { kent } = loadKent({ machineList, spacesList, execImpl: core.exec });
   const st = kent.machineStore(null);
@@ -268,7 +268,7 @@ async function testPruneAndPendingRestore() {
   const core = fakeCore();
   const storage = {};
   const sharedData = {};
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp-live', machine: null }];
   const first = loadKent({ sharedData, storage, machineList, spacesList, execImpl: core.exec });
   first.kent.enqueueGroupOp(null, { type: 'create', id: 'g1', name: 'One', space: 'sp-dead' }, { label: 'create' });
@@ -291,7 +291,7 @@ async function testPruneAndPendingRestore() {
 
 async function testReplayedSuccessfulOperationIsIdempotent() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp1', machine: null }];
   const { kent } = loadKent({ machineList, spacesList, execImpl: core.exec });
   const st = kent.machineStore(null);
@@ -308,7 +308,7 @@ async function testReplayedSuccessfulOperationIsIdempotent() {
 
 async function testRemoteAdoptionKeepsOptimisticQueue() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp1', machine: null }];
   const { kent } = loadKent({ machineList, spacesList, execImpl: core.exec });
   const st = kent.machineStore(null);
@@ -332,7 +332,7 @@ async function testRemoteAdoptionKeepsOptimisticQueue() {
 
 async function testCoreResetRepair() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp1', machine: null }];
   const { kent, sharedData } = loadKent({ machineList, spacesList, execImpl: core.exec });
   const st = kent.machineStore(null);
@@ -358,7 +358,7 @@ async function testCoreResetRepair() {
 
 async function testCoreResetDetectedAfterRestart() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp1', machine: null }];
   const sharedData = {
     [STORE]: {
@@ -389,7 +389,7 @@ async function testCoreResetDetectedAfterRestart() {
 
 async function testMutationQueuesBehindCoreResetRepair() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const spacesList = [{ id: 'sp1', machine: null }];
   const { kent } = loadKent({ machineList, spacesList, execImpl: core.exec });
   const st = kent.machineStore(null);
@@ -420,6 +420,22 @@ async function testPruneWaitsForReadyMachine() {
   assert.deepEqual(core.getDoc(null).value.in.g1, ['sp-dead'], 'unavailable machine keeps membership');
 }
 
+async function testPruneThisComputerWithoutMachinesEntry() {
+  // In a real app `machines()` never lists this computer, so its spaces come
+  // straight from the running app and no layout entry has to be waited for.
+  const core = fakeCore();
+  const spacesList = [{ id: 'sp-live', machine: null }];
+  const { kent } = loadKent({ machineList: [], spacesList, execImpl: core.exec });
+  const local = { groups: [{ id: 'g1', name: 'One', machine: null, folded: false }], in: { g1: ['sp-dead', 'sp-live'] }, defaultFolded: false };
+  assert.equal(kent.pruneMachineData(local, null), true, 'this computer prunes without a machines() entry');
+  assert.deepEqual(local.in.g1, ['sp-live']);
+
+  const remote = { groups: [{ id: 'g2', name: 'Two', machine: '4090', folded: false }], in: { g2: ['sp-x', 'sp-dead'] }, defaultFolded: false };
+  const remoteSpaces = [{ id: '4090/sp-x', machine: '4090' }];
+  assert.equal(kent.pruneMachineData(remote, '4090', remoteSpaces, [{ name: '4090', layout: 'unavailable' }]), false, 'a machine still loading keeps its members');
+  assert.deepEqual(remote.in.g2, ['sp-x', 'sp-dead']);
+}
+
 
 async function testUnsupportedCoreIsDetected() {
   const core = fakeCore({ fail: () => ({ kind: 'needs_update', message: 'core does not support documents' }) });
@@ -432,7 +448,7 @@ async function testUnsupportedCoreIsDetected() {
 
 async function testMachineIsolation() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }, { name: '4090', layout: 'ready' }];
+  const machineList = [{ name: '4090', layout: 'ready' }];
   const spacesList = [{ id: 'sp1', machine: null }, { id: '4090/sp1', machine: '4090' }];
   const { kent, sharedData } = loadKent({ machineList, spacesList, execImpl: core.exec });
   for (const machine of [null, '4090']) {
@@ -451,7 +467,7 @@ async function testMachineIsolation() {
 
 async function testFoldRenameDeleteIntents() {
   const core = fakeCore();
-  const machineList = [{ name: null, layout: 'ready' }];
+  const machineList = [];
   const { kent } = loadKent({ machineList, spacesList: [], execImpl: core.exec });
   const st = kent.machineStore(null);
   const ops = [
@@ -571,6 +587,7 @@ async function testRealCoreRpc() {
   await testCoreResetDetectedAfterRestart();
   await testMutationQueuesBehindCoreResetRepair();
   await testPruneWaitsForReadyMachine();
+  await testPruneThisComputerWithoutMachinesEntry();
   await testUnsupportedCoreIsDetected();
   await testMachineIsolation();
   testSyncWorkerAdoption();

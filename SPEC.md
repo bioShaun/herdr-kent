@@ -1,6 +1,6 @@
 # Kent 待审阅事项改进规格说明（Spec）
 
-> 本文档对应代码全面审查中「待审阅 / 确认的问题」清单，为每一项给出具体的技术建议、方案取舍、实现设计及验收标准，供确认后按需实施。
+> **状态（2026-11-26）：以下 S-1 … S-8 均已在代码中实现（S-2 的本机就绪判断在随后的审查中修正）。本文保留为这轮审查的设计记录，不再是待办清单；当前行为以 `README.md` / `RECIPE.md` 为准。**
 
 ## 优先级总览
 
@@ -10,7 +10,7 @@
 | S-2 | `kent.groups.v1` 残留失效 space ID 清理 | P1 | 仅在目标机器 `layout === "ready"` 且写入/低频巡检时做保守惰性清理 | `mods/kent/main.js` |
 | S-3 | `RECIPE.md` 文案与实现/预览图不一致 | P1 | 同步更新示例组名与菜单项文案及顺序 | `RECIPE.md` |
 | S-4 | `generate-preview.py` 中未上报状态的 demo app 配置 | P2 | 保持 4 个 Agents 列表简洁，将非 agent 演示行改为真实意图（或独立工具脚本），避免虚假的 `codex`/`claude` 配置 | `scripts/generate-preview.py`（可选重绘 `preview.png`） |
-| S-5 | `icon-chip.js` 双份副本防漂移机制 | P2 | 增加轻量同步/校验脚本并在 `herdr-app check` 开发流程中调用 | `scripts/check-sync.py`、`README.md`、`README.zh-CN.md` |
+| S-5 | `icon-chip.js` 双份副本防漂移机制 | P2 | 增加轻量同步/校验脚本并在 `herdr-app check` 开发流程中调用 | `scripts/check.py`、`README.md`、`README.zh-CN.md` |
 | S-6 | 亮色主题下 Spaces 与 Agents 单色图标着色统一 | P2 | 统一由 `iconChip` 的默认亮暗策略决定，或显式统一为 `t.muted` / `t.foreground` | `mods/kent-agents/main.js`、`mods/kent/icon-chip.js`、`mods/kent-agents/icon-chip.js` |
 | S-7 | 分组弹窗、分组右键菜单与 `kent-agents` 交互打磨 | P3 | 禁用空输入提交并提示同机器重名、按位置隐藏无效上下移、对齐 `kent-agents` 细微交互 | `mods/kent/main.js`、`mods/kent-agents/main.js` |
 | S-8 | 开发脚本健壮性增强（SVG 解析与预览进程兜底） | P3 | 跳过 `<defs>`/`<clipPath>`/`<mask>` 非渲染子节点；`stop_core` 超时兜底 `SIGTERM` | `scripts/generate-icon-metrics.py`、`scripts/generate-preview.py` |

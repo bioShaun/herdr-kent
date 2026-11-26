@@ -979,6 +979,15 @@ function stopGroupSync() {
   wakeGroupSync();
 }
 
+// Whether a machine's spaces are known: `machines()` describes the layout
+// documents of the *other* machines (this computer has none — its spaces are
+// the app's own), so its entry decides for them, while this computer counts as
+// ready unless an entry says otherwise.
+function machineReady(ms, machine) {
+  const entry = ms.find((m) => (m.name ?? null) === (machine ?? null));
+  return entry ? entry.layout === "ready" : (machine ?? null) === null;
+}
+
 // Closed spaces leave their ids behind in group membership. Prune them only
 // when this machine's layout is definitely answering; an away or still-loading
 // machine keeps every id because its spaces simply aren't here to ask.
@@ -986,8 +995,7 @@ function pruneMachineData(data, machine, sp = spaces(), ms = machines(), busyMac
   if (checking()) return false;
   machine = machine ?? null;
   if (busyMachines.has(machine)) return false;
-  const entry = ms.find((m) => (m.name ?? null) === machine);
-  if (!entry || entry.layout !== "ready") return false;
+  if (!machineReady(ms, machine)) return false;
   const live = new Set(sp.filter((s) => (s.machine ?? null) === machine).map((s) => bareSpaceId(s.id, machine)));
   if (!live.size && Date.now() - startedAt < STARTUP_GRACE) return false;
   let removed = false;
@@ -1106,6 +1114,8 @@ export default class Spaces extends View {
     this.edgeDir = 0; // -1, 0 or 1: the edge a dragged row is held at
     this.scroll = ScrollHandle.new(); // the list's position: the active space is brought into view through it
     this.activeAt = -1; // the active space's place among the list's children (headers and rows), -1 when not drawn
+    this.listHeight = -1; // last viewport height, so only a real height change reveals the active row
+    this.wheelAt = 0; // when this list last took a wheel; a size change right after must not yank it back
     this.machines = [];
     try {
       this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
@@ -1281,6 +1291,7 @@ export default class Spaces extends View {
 
   // `key` and the other places in its repo (a commit there moves their ahead/behind).
   sameRepo(key, keys) {
+    if (!key) return [];
     const repo = this.git[key]?.repo;
     return [key, ...(repo ? [...keys].filter((k) => this.git[k]?.repo === repo) : [])];
   }
@@ -1351,22 +1362,27 @@ export default class Spaces extends View {
     if (this.refreshing) return;
     this.refreshing = true;
     cx.spawn(async (cx) => {
-      while (this.pending.size) {
-        const keys = [...this.pending];
-        this.pending.clear();
-        let next = 0;
-        await Promise.all(Array.from({ length: Math.min(AT_ONCE, keys.length) }, async () => {
-          while (next < keys.length) await this.check(keys[next++], cx);
-        }));
+      try {
+        while (this.pending.size) {
+          const keys = [...this.pending];
+          this.pending.clear();
+          let next = 0;
+          await Promise.all(Array.from({ length: Math.min(AT_ONCE, keys.length) }, async () => {
+            while (next < keys.length) await this.check(keys[next++], cx);
+          }));
+        }
+      } finally {
+        // A failing look must not leave the flag set for the rest of the session.
+        this.refreshing = false;
+        cx.notify();
       }
-      this.refreshing = false;
-      cx.notify();
     });
   }
 
   // One place's git: branch, ahead/behind, its repo.
   async check(key, cx) {
-    const [on, cwd] = JSON.parse(key);
+    let on, cwd;
+    try { [on, cwd] = JSON.parse(key); } catch { return; }
     this.checked[key] = Date.now();
     this.unsure.delete(key);
     try {
@@ -1829,7 +1845,7 @@ export default class Spaces extends View {
 
   orderingDue(now, ms = machines()) {
     return this.ordering && now - this.ordering.at >= 1000
-      && this.ordering.machines.every(name => ms.some(m => m.name === name && m.layout === "ready"));
+      && this.ordering.machines.every(name => machineReady(ms, name));
   }
 
   // Spaces in order. Herdr's rule — a linked worktree sits under its main
@@ -2180,12 +2196,12 @@ export default class Spaces extends View {
               .child(svg("mods/workspace-chrome/folder-plus.svg").size(11)))
             .child(div().id(`machine-add-${m ?? "local"}`).size(20).flex_none().flex().items_center().justify_center().rounded(5).hover(s => s.bg(t.hover).text_color(t.foreground))
               .tooltip("New space")
-              .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); })
+              .on_click((_e, cx) => { cx.stop_propagation(); this.newSpaceInGroup(defaultGroupFor(m, machineStore(m).data), m, cx); })
               .child(svg("mods/workspace-chrome/plus.svg").size(11))))
           .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
       const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().rounded(7)
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
-        .on_click(() => run("space.new", { machine: m ?? "" }))
+        .on_click((_e, cx) => this.newSpaceInGroup(defaultGroupFor(m, machineStore(m).data), m, cx))
         .when(collapsed, el => el.w(RAIL_CELL).rounded(6).justify_center().tooltip(`New space on ${m ?? "this computer"}`)
           .child(h_flex().size(18).rounded(5).border_1().border_color(t.dim).items_center().justify_center()
             .child(svg("mods/workspace-chrome/plus.svg").size(10))))
@@ -2588,11 +2604,26 @@ export default class Spaces extends View {
             .on_click(() => this.openGroupPrompt(sp.find((space) => space.active)?.machine ?? null)).child(svg("mods/workspace-chrome/folder-plus.svg").size(13))))
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New space")
-            .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
+            .on_click((_e, cx) => {
+              // The same path as the default group's +: create on the machine the
+              // core would pick (the active space's), and unfold a folded default
+              // so the new row is not created out of sight.
+              const machine = sp.find((space) => space.active)?.machine ?? null;
+              this.newSpaceInGroup(defaultGroupFor(machine, machineStore(machine).data), machine, cx);
+            }).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("hover").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
-        .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } this.soonCaption(cx); })
-        .on_scroll_wheel((_e, cx) => this.soonCaption(cx))
+        // Only a height change counts: a hover scrollbar also reports a width change, and revealing the active row on that
+        // would pull a wheel-scrolled list back (scroll_to_item scrolls only when the row is out of view).
+        .on_size_change((size, cx) => {
+          const height = Math.round(size.height);
+          if (this.listHeight !== height) {
+            this.listHeight = height;
+            if (Date.now() - this.wheelAt > 1000 && this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); }
+          }
+          this.soonCaption(cx);
+        })
+        .on_scroll_wheel((_e, cx) => { this.wheelAt = Date.now(); this.soonCaption(cx); })
         // A dragged row held near an edge scrolls the list: the pointer is followed wherever it is in the window.
         .on_window_mouse_move((e, cx) => this.edgeFollow(e, cx))
         .children(list));

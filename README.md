@@ -8,17 +8,17 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 
 ## What it does
 
-- Groups spaces under named labels such as `design`, `code`, or `experiments`; unassigned spaces stay in `default`; once named groups are in use, `default` has its own foldable heading.
+- Groups spaces under named labels such as `design`, `code`, or `experiments`; unassigned spaces stay in `default`, under a foldable heading of their own once named groups are in use.
 - Groups are scoped to each machine; remote and local spaces are never mixed.
 - Group headers fold and unfold, show member counts, and keep blocked/done status visible while folded.
-- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares. A name that doesn't fit, and every row of the compact rail, shows its full name in a tooltip.
+- Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares. A name that doesn't fit shows its full name in a tooltip, as does every row of the compact rail.
 - The name keeps its width while it fits: the git tail is what narrows, and it is left out when only a stub of it would fit. A long name is cut in the middle, so its telling end stays visible.
 - Agents use the same icon chips and name tooltips through the included `kent-agents` mod, and drop the detail after a space's name where only a stub of it would fit.
 - Once a machine's header has scrolled out of the list, its name stays beside `Spaces` until you scroll back; click it to bring the header back.
 - Both lists show their scrollbar only while you are in them or scrolling.
 - Spaces can be created directly inside a group, assigned from the right-click menu, or dragged onto a group header.
 - Spaces can be reordered inside a group, dragged between groups, or moved back to `default`.
-- Worktrees stay nested under their checkout, and Herdr's machine/git/space ordering behavior is preserved.
+- Machine folding/reconnection, git details and the narrow numbered rail come from Herdr's `spaces` mod. Worktree nesting is Herdr's in `default`; inside a named group Kent draws the tree, and a worktree nests only while it sits directly under its main checkout there.
 - The compact narrow-sidebar rail still works when the sidebar is very small. Its numbers are each row's place in the list as drawn, and the optional `ctrl-1` … `ctrl-9` keys select by them.
 
 ## Install
@@ -161,7 +161,7 @@ uv run --with svgpathtools python scripts/generate-icon-metrics.py
 After changing the layout or mods, regenerate the preview from the repository root:
 
 ```sh
-python3 scripts/generate-preview.py
+uv run --with pillow python scripts/generate-preview.py
 ```
 
 The script starts a temporary isolated Herdr home/core, seeds curated demo spaces and agents, captures a real rendered frame with `herdr-app shot`, writes `preview.png`, and removes the temporary instance. It does not read or capture your normal Herdr home. Use `--keep` to keep the isolated directory for debugging, or `--output` to write another file.

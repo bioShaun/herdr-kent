@@ -8,7 +8,7 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 
 ## 功能
 
-- 可以把 spaces 放入 `设计`、`代码`、`实验` 等命名分组；没有命名分组的 spaces 会留在 `default`；使用命名分组后，`default` 会显示为可折叠标题。
+- 可以把 spaces 放入 `设计`、`代码`、`实验` 等命名分组；未归组的 spaces 留在 `default`，一旦使用命名分组，它们会有自己的可折叠标题。
 - 分组按机器隔离；本机和远程机器的 spaces 不会混在一起。
 - 分组标题可以折叠/展开，显示成员数量；折叠后仍会显示 blocked/done 状态。
 - space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。名称显示不全时（以及窄栏编号模式下），悬停可以看到完整名称。
@@ -18,7 +18,7 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 - 两个列表的滚动条只在鼠标停留或滚动时出现。
 - 可以直接在分组里新建 space，也可以通过右键菜单放入分组，或直接拖到分组标题上。
 - 可以在组内排序、在分组之间拖动，也可以移回 `default` 组。
-- 保留 Herdr 原有的 worktree 嵌套、机器分组、git 信息和 space 排序行为。
+- 机器折叠/重连、git 信息和窄栏编号来自 Herdr 自带的 `spaces` mod。worktree 嵌套在 `default` 组沿用 Herdr 规则；在命名组里由 Kent 自己画树线，只有当 worktree 紧接在其 main checkout 之后时才会嵌套。
 - 很窄的侧栏下仍然支持紧凑的编号 rail 模式。编号就是该行在列表里的位置，可选快捷键 `ctrl-1` … `ctrl-9` 按这个编号选择。
 
 ## 安装
@@ -161,7 +161,7 @@ uv run --with svgpathtools python scripts/generate-icon-metrics.py
 修改 layout 或 mods 后，可以在仓库根目录重新生成预览图：
 
 ```sh
-python3 scripts/generate-preview.py
+uv run --with pillow python scripts/generate-preview.py
 ```
 
 脚本会启动临时的隔离 Herdr home/core，布置策展好的 demo spaces 和 agents，用 `herdr-app shot` 截取真实渲染帧并写入 `preview.png`，结束后清理临时实例。它不会读取或截取你正常使用的 Herdr home。调试时可以使用 `--keep` 保留隔离目录，也可以用 `--output` 输出到其他文件。

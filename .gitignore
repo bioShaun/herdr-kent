@@ -4,3 +4,6 @@ mods/*/jsconfig.json
 
 # Python bytecode cache from running the dev scripts.
 scripts/__pycache__/
+
+# Finder metadata.
+.DS_Store

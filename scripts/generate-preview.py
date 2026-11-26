@@ -9,7 +9,7 @@ Herdr home or core session.
 
 Run from the repository root:
 
-    python3 scripts/generate-preview.py
+    uv run --with pillow python scripts/generate-preview.py
 """
 
 from pathlib import Path
