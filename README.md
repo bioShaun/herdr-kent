@@ -15,7 +15,8 @@ Kent is a Herdr layout for people who keep many spaces open. It keeps Herdr's pr
 - The search button under `Spaces` (or the palette's **Filter spaces**) narrows the list by space name, machine, git repo, branch, or folder. A group-name match shows the whole group; counts read `matched/total`; `↑`/`↓` move the highlight, `Enter` opens it, and `Esc` clears it. The filter changes what is drawn, never Herdr's real space order.
 - Space rows show program icons in theme-aware contrast-edge chips, plus the space name, git repository/branch details, and agent status. Shipped SVG icons are fitted from their visible vector bounds, so tall or wide artwork keeps its direction instead of being stretched into squares. A name that doesn't fit shows its full name in a tooltip, as does every row of the compact rail.
 - The name keeps its width while it fits: the git tail is what narrows, and it is left out when only a stub of it would fit. A long name is cut in the middle, so its telling end stays visible.
-- Agents use the same icon chips and name tooltips through the included `kent-agents` mod, and drop the detail after a space's name where only a stub of it would fit. Sub-agent and group folds persist across restarts.
+- Agents use the same icon chips and name tooltips through the included `kent-agents` mod, cut a long name in the middle, and keep a distinguishing detail when two agents on the same machine would otherwise read the same. You can sort them by priority, by space, or by machine. Sub-agent and group folds persist across restarts. Clicking an agent also brings its machine into view in the Spaces list.
+- A machine that still has agents, or a Parked folder, is listed under its own header even when it has no open space. Temporary (`--temp`) sandboxes stay hidden, as in Herdr. If that machine has no open space, the list says how many agents are there: click to open one, or use the header `+` to make a new space.
 - Once a machine's header has scrolled out of the list, its name stays beside `Spaces` until you scroll back; click it to bring the header back.
 - Both lists show their scrollbar only while you are in them or scrolling.
 - Spaces can be created directly inside a group, assigned from the right-click menu, or dragged onto a group header. A new space from the header or a group's `+` lands directly below the active space when it is in that same group, instead of at the end of the group.
@@ -87,8 +88,17 @@ Herdr installs a shared layout as a plain copy, so Kent carries a small updater 
 ```json
 {
   "layout:kent": {
-    "alt-down": "kent.next",
-    "alt-up": "kent.prev",
+    "alt-down": "agent.next",
+    "alt-up": "agent.prev",
+    "alt-1": "agent.select:1",
+    "alt-2": "agent.select:2",
+    "alt-3": "agent.select:3",
+    "alt-4": "agent.select:4",
+    "alt-5": "agent.select:5",
+    "alt-6": "agent.select:6",
+    "alt-7": "agent.select:7",
+    "alt-8": "agent.select:8",
+    "alt-9": "agent.select:9",
     "ctrl-1": "kent.select1",
     "ctrl-2": "kent.select2",
     "ctrl-3": "kent.select3",
@@ -104,7 +114,7 @@ Herdr installs a shared layout as a plain copy, so Kent carries a small updater 
 }
 ```
 
-The first pair moves through spaces in the order Kent draws them, skipping rows hidden inside folded groups. `ctrl-1` … `ctrl-9` select the Nth row as the sidebar shows it, the number the narrow rail prints. Herdr's own `ctrl-N` goes by its internal space order, which parts ways with the list once groups and worktree nesting reorder rows; the `layout:kent` section wins over `global` while Kent is shown. Already merged an older `layout:kent` section? Add the nine `ctrl-N` lines to it.
+`alt-up` / `alt-down` keep Herdr's agent previous/next, and `alt-1` … `alt-9` use Herdr 0.1.18's `agent.select` to jump to the Nth agent in the list as Kent draws it. Space movement stays on `ctrl-shift-pageup` / `ctrl-shift-pagedown` (`kent.prev` / `kent.next`), which follow the order Kent draws, skip rows hidden inside folded groups, and follow an active filter. `ctrl-1` … `ctrl-9` select the Nth space row as the sidebar shows it, the number the narrow rail prints; they are not used for agents. Herdr's own `ctrl-N` goes by its internal space order, which parts ways with the list once groups and worktree nesting reorder rows; the `layout:kent` section wins over `global` while Kent is shown. Already merged an older `layout:kent` section? Restore `alt-up` / `alt-down` to `agent.prev` / `agent.next`, add the `alt-N` lines, and keep the nine `ctrl-N` space bindings.
 
 ## Using groups
 
@@ -118,7 +128,7 @@ The first pair moves through spaces in the order Kent draws them, skipping rows 
 - While dragging a grouped space, use `Move to default` at the bottom of the list to remove it from its named group.
 - Click a group header to fold or unfold it; use its `+` button to create a new space inside that group. The `+` puts the new row under the active space when that space already belongs to the group.
 - Right-click a named group header to create a space in it, rename, reorder, fold/unfold, or delete it. Deleting a group never closes its spaces.
-- Use the search button, **Filter spaces** in the palette, or the `kent.filter` command to filter. `↑`/`↓` move the filter highlight; `Enter` opens the highlighted space; `Esc` clears the query and closes the filter. Number keys and `alt-up`/`alt-down` follow the filtered list too.
+- Use the search button, **Filter spaces** in the palette, or the `kent.filter` command to filter. `↑`/`↓` move the filter highlight; `Enter` opens the highlighted space; `Esc` clears the query and closes the filter. Number keys and `ctrl-shift-pageup` / `ctrl-shift-pagedown` follow the filtered space list too.
 - Close a space and it moves to that machine's **Parked** section. Click a Parked row to reopen its folder in the group it came from (or `default` if that group is gone). The `×` on the row forgets it; it is local to this client.
 
 On git checkouts, the space menu also includes Herdr's worktree actions: `New worktree`, `Open worktree`, and, for linked checkouts, `Remove worktree`.
@@ -132,7 +142,7 @@ Kent does not hardcode a light or dark theme. It follows `settings.json`, the sy
 - Grouping is manual. Kent does not infer groups from path, prefix, or tags.
 - Groups cannot span machines. Same-named groups on two machines are independent.
 - Group state is stored per machine in that machine's herdr-core document `kent.groups.v1`. Clients connected to the same machine share group definitions, membership, ordering, and fold state, even when they use different local aliases for that machine; membership is stored as machine-local space ids.
-- Writes are optimistic in the window and then written asynchronously with the core document's compare-and-set version. A conflict is reread and the intent is reapplied rather than blindly overwriting the other client's edit. Kent polls about every three seconds while visible, so another client's change can take a few seconds to appear.
+- Writes are optimistic in the window and then written asynchronously with the core document's compare-and-set version. A conflict is reread and the intent is reapplied rather than blindly overwriting the other client's edit. On herdr-core 0.1.22 and newer, Kent subscribes to `kent.groups.v1` with `hc events --doc` and refreshes when that document changes; it still polls every few seconds as a fallback, and on older cores that is the only path. Another client's change can take a few seconds to appear when falling back to the poll.
 - If a machine is offline or its core is too old for document storage, Kent keeps the previous client-local behavior and queues edits locally. Queued intents survive app restarts and retry when the machine and core are available; until then those edits are not visible to other clients.
 - Existing client-local groups are migrated once into each machine document. Same-named legacy groups are merged because the old local-only data did not have stable cross-client identities; membership already present in the machine document wins. If several clients had divergent arrangements, review important groups after the first synchronized migration.
 - Parked projects are a client-local drawer (`kent.projects.v1`, capped at 50 per machine). They remember the folder, display name, and old group only — not tabs, scrollback, or the exact process. They are not synchronized, so another client has its own drawer; reopening a folder creates a new space rather than restoring the old session.

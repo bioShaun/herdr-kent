@@ -16,7 +16,7 @@ const MIGRATED_KEY = 'kent.groups.sync.migrated';
 const PENDING_KEY = 'kent.groups.pending.v1';
 const VERSIONS_KEY = 'kent.groups.sync.versions';
 
-function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList = [], execImpl = null, platform = null } = {}) {
+function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList = [], agentsList = [], execImpl = null, platform = null } = {}) {
   let source = fs.readFileSync(MAIN, 'utf8');
   source = source.replace(/^import .*;\n/gm, '');
   source = source.replace(/export function /g, 'function ');
@@ -29,6 +29,8 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
     rebuildOptimistic, adoptRemote, processGroupOp, pruneMachineData,
     pendingGroupOps, clearPendingGroupOp, startGroupSync, stopGroupSync, groupSync, Spaces,
     readProjects, projectEntries, rememberProject, forgetProject, projectKeyOf, normPath,
+    agentMachine, agentsOnMachine, firstAgentOnMachine, parkedMachineNames,
+    rememberTemporaryMachines, isTemporaryMachine, parseGroupDocEvent, eventsLookUnsupported,
   };`;
 
   const localStorage = {
@@ -44,6 +46,7 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
     setShared: (k, v) => { sharedData[k] = v; },
     spaces: () => spacesList,
     machines: () => machineList, // the other machines' layout documents: this computer has no entry
+    agents: () => agentsList,
     panes: () => [],
     run: () => {},
     openOverlay: () => {}, closeOverlay: () => {}, props: () => null,
@@ -606,6 +609,67 @@ function testFilterAndParkedStore() {
   assert.equal(kent.normPath('/tmp/one//'), '/tmp/one');
 }
 
+function testAgentAndParkedMachines() {
+  const agentsList = [
+    { address: 'om36/t1', status: 'idle', space_name: 'deliver' },
+    { address: 'om36/t2', status: 'blocked', space_name: 'deliver-ai-2' },
+    { address: 't3', status: 'idle', space_name: 'local' },
+  ];
+  const { kent } = loadKent({
+    machineList: [{ name: '4090', layout: 'ready' }],
+    spacesList: [{ id: 'sp1', machine: null }, { id: '4090/sp1', machine: '4090' }],
+    agentsList,
+  });
+  assert.equal(kent.agentMachine('om36/t1'), 'om36');
+  assert.equal(kent.agentMachine('t3'), null);
+  assert.equal(kent.agentsOnMachine('om36', agentsList).length, 2);
+  assert.equal(kent.firstAgentOnMachine('om36', agentsList).address, 'om36/t2');
+  const names = kent.syncMachineNames();
+  assert.deepEqual(names.filter(Boolean).sort(), ['4090', 'om36']);
+  assert.ok(names.includes(null));
+
+  kent.rememberProject({ machine: 'parked-box', folder: '/tmp/p', name: 'P' });
+  assert.ok(kent.syncMachineNames().includes('parked-box'));
+
+  kent.rememberTemporaryMachines([{ name: 'om36', temporary: true }, { name: '4090', temporary: false }]);
+  assert.equal(kent.isTemporaryMachine('om36'), true);
+  const after = kent.syncMachineNames();
+  assert.ok(!after.includes('om36'), 'temporary agent machines stay hidden');
+  assert.ok(after.includes('4090'));
+  assert.ok(after.includes('parked-box'));
+  kent.rememberTemporaryMachines([]);
+}
+
+function testParseGroupDocEvents() {
+  const { kent } = loadKent();
+  const doc = kent.parseGroupDocEvent(JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'event',
+    params: { type: 'doc', data: { name: 'kent.groups.v1', version: 2 }, machine: 'om36', seq: 43 },
+  }));
+  assert.deepEqual(doc, { type: 'doc', name: 'kent.groups.v1', version: 2, machine: 'om36', seq: 43 });
+
+  const local = kent.parseGroupDocEvent(JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'event',
+    params: { type: 'doc', data: { name: 'kent.groups.v1', version: 1 }, seq: 8 },
+  }));
+  assert.equal(local.type, 'doc');
+  assert.equal(local.machine, null);
+
+  const missed = kent.parseGroupDocEvent(JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'missed',
+    params: { seq: 57, terminals: [] },
+  }));
+  assert.equal(missed.type, 'missed');
+  assert.equal(kent.parseGroupDocEvent(JSON.stringify({ jsonrpc: '2.0', method: 'heartbeat', params: { seq: 9 } })), null);
+  assert.equal(kent.parseGroupDocEvent('{"seq":1,"terminals":[]}'), null);
+  assert.equal(kent.eventsLookUnsupported(1, "error: unexpected argument '--doc' found", ''), true);
+  assert.equal(kent.eventsLookUnsupported(0, '', ''), false);
+  assert.equal(kent.eventsLookUnsupported(1, 'machine unknown', ''), false);
+}
+
 (async () => {
   await testCanonical();
   await testUnicodeRpc();
@@ -627,6 +691,8 @@ function testFilterAndParkedStore() {
   await testMachineIsolation();
   testSyncWorkerAdoption();
   testFilterAndParkedStore();
+  testAgentAndParkedMachines();
+  testParseGroupDocEvents();
   await testFoldRenameDeleteIntents();
   await testUnavailableStaysQueued();
   console.log('group sync harness checks passed');

@@ -20,6 +20,8 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 // say something: with less room than this (about seven characters), or less than all of it
 // takes, the space name keeps the line. The tooltip has the detail either way.
 const DETAIL_MIN = 56;
+const LONG_NAME = 16;
+const REVEAL_MACHINE_KEY = "kent.reveal-machine";
 const MIGRATE_RETRY = 5000;
 // A 13px Latin glyph is about 7.8 wide; CJK and emoji take a full em (about 13).
 // Before the row reports its real room, this keeps a short CJK detail from being
@@ -95,7 +97,20 @@ const kidStatus = (k, listed) => {
 const SORTS = [
   { id: "priority", label: "Priority", icon: "clock" },
   { id: "grouped", label: "Grouped by space", icon: "layers" },
+  { id: "machine", label: "Grouped by machine", icon: "server" },
 ];
+
+function machineOf(a) {
+  return typeof a?.address === "string" && a.address.includes("/") ? a.address.split("/")[0] : null;
+}
+
+function machineTitle(a) {
+  return machineOf(a) ?? "This computer";
+}
+
+function revealAgentMachine(a) {
+  setShared(REVEAL_MACHINE_KEY, { machine: machineOf(a), at: Date.now() });
+}
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
@@ -319,11 +334,22 @@ export default class Agents extends View {
     const tabCounts = new Map();
     for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
     const byPriority = sort.id === "priority";
+    const byMachine = sort.id === "machine";
     // A helper's done is its own row's news: it doesn't pull a working parent out of Working.
     const kidRank = (k) => { const s = kidStatus(k, this.listed); return RANK[s === "done" ? "idle" : s] ?? 0; };
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...subsOf(a.address).map((s) => kidRank(s.t)))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
+    if (byMachine) {
+      list = [...list].sort((x, y) => {
+        const mx = machineTitle(x);
+        const my = machineTitle(y);
+        if (mx === my) return 0;
+        if (mx === "This computer") return -1;
+        if (my === "This computer") return 1;
+        return mx.localeCompare(my);
+      });
+    }
     const pinned = list.filter((a) => a.pinned);
     const rest = list.filter((a) => !a.pinned);
     list = [...pinned, ...rest];
@@ -399,7 +425,7 @@ export default class Agents extends View {
           .gap(4)
           .when(a.focused, (el) => el.bg(t.selected))
           .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
-          .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_click(() => { revealAgentMachine(a); run("pane.focus", { pane: a.pane }); })
           .tooltip([machine, a.space_name || label(a)].filter(Boolean).join(" · "))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -425,15 +451,29 @@ export default class Agents extends View {
         })
         .child(svg(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
       // Under a space header the space goes without saying; an automatic tab number says nothing.
-      // Without a space header above (priority, pinned) the row names its space.
-      const full = byPriority || isPinned;
+      // Without a space header above (priority, machine, pinned) the row names its space.
+      const full = byPriority || byMachine || isPinned;
       const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
-      // The row shows what fits; the tooltip says the whole of it. The detail goes only where
-      // it is more than a stub (see DETAIL_MIN); until the row has been laid out, it is drawn.
-      const tip = [machine, name, more].filter(Boolean).join(" · ");
-      const detailText = full && more ? `\u00b7 ${more}` : "";
+      let shownMore = more;
+      const peers = list.filter((p) => {
+          const pMachine = machineOf(p);
+          const pMore = detail.get(p.address);
+          const pFull = byPriority || byMachine || p.pinned;
+          const pName = pFull ? p.space_name || label(p) : pMore ?? (/^\d+$/.test(label(p)) ? p.program?.name || label(p) : label(p));
+          return (pMachine ?? "") === (machine ?? "") && pName === name;
+        });
+      const nameClash = peers.length > 1;
+      if (nameClash) {
+        const cands = [more, label(a), a.pane_name, a.tab_name, a.address.includes("/") ? a.address.slice(a.address.indexOf("/") + 1) : a.address].filter(Boolean);
+        shownMore = cands.find((c) => peers.filter((p) => p.address !== a.address).every((p) => {
+          const other = [detail.get(p.address), label(p), p.pane_name, p.tab_name, p.address.includes("/") ? p.address.slice(p.address.indexOf("/") + 1) : p.address];
+          return !other.includes(c);
+        })) || cands[cands.length - 1] || more;
+      }
+      const tip = [machine, name, shownMore].filter(Boolean).join(" · ");
+      const detailText = (full || nameClash) && shownMore ? `\u00b7 ${shownMore}` : "";
       const room = this.room?.get(a.address);
-      const showDetail = Boolean(detailText) && (room === undefined || room >= Math.min(DETAIL_MIN, textPx(detailText)));
+      const showDetail = Boolean(detailText) && (nameClash || room === undefined || room >= Math.min(DETAIL_MIN, textPx(detailText)));
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -451,7 +491,7 @@ export default class Agents extends View {
           else if (this.hovered === a.address) this.hovered = null;
           cx.notify();
         })
-        .on_click(() => run("pane.focus", { pane: a.pane }))
+        .on_click(() => { revealAgentMachine(a); run("pane.focus", { pane: a.pane }); })
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
@@ -463,7 +503,7 @@ export default class Agents extends View {
           // A long name is cut in the middle: its end often tells agents apart ("…-manager"),
           // and the tooltip has the whole of it.
           .child(div().min_w(0).max_w(showDetail ? 120 : 200).truncate()
-            .when(name.length > 16, (el) => el.text_ellipsis_middle())
+            .when(name.length > LONG_NAME, (el) => el.text_ellipsis_middle())
             .text_color(idle ? t.muted : t.foreground).tooltip(tip).child(name))
           // The detail's box stays whether or not the text is in it: it is how the row learns
           // what the name leaves.
@@ -485,9 +525,9 @@ export default class Agents extends View {
     const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
     for (const a of rest) {
       const r = rankOf(a) || RANK.idle;
-      const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
+      const id = byPriority ? `sec-${r}` : byMachine ? `m-${machineTitle(a)}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
-      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
+      else groups.push({ id, label: byPriority ? SECTION[r] : byMachine ? machineTitle(a) : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
     }
 
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.
