@@ -15,6 +15,7 @@ const STORE = 'kent.groups.v1';
 const MIGRATED_KEY = 'kent.groups.sync.migrated';
 const PENDING_KEY = 'kent.groups.pending.v1';
 const VERSIONS_KEY = 'kent.groups.sync.versions';
+const PROJECTS_KEY = 'kent.projects.v1';
 
 function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList = [], agentsList = [], execImpl = null, platform = null } = {}) {
   let source = fs.readFileSync(MAIN, 'utf8');
@@ -76,9 +77,9 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
 function fakeCore({ fail = null, conflictOnce = false } = {}) {
   const docs = new Map();
   let setCount = 0;
-  const keyFor = (machine) => machine ?? '';
-  const getDoc = (machine) => {
-    const key = keyFor(machine);
+  const keyFor = (machine, name = 'kent.groups.v1') => `${name}\u0000${machine ?? ''}`;
+  const getDoc = (machine, name = 'kent.groups.v1') => {
+    const key = keyFor(machine, name);
     if (!docs.has(key)) docs.set(key, { value: null, version: 0 });
     return docs.get(key);
   };
@@ -98,10 +99,10 @@ function fakeCore({ fail = null, conflictOnce = false } = {}) {
         if (failure) { error(failure.kind, failure.message, failure.code); continue; }
       }
       if (request.method === 'doc.get') {
-        const doc = getDoc(request.params.on ?? null);
+        const doc = getDoc(request.params.on ?? null, request.params.name ?? 'kent.groups.v1');
         respond({ value: doc.value, version: doc.version });
       } else if (request.method === 'doc.set') {
-        const doc = getDoc(request.params.on ?? null);
+        const doc = getDoc(request.params.on ?? null, request.params.name ?? 'kent.groups.v1');
         setCount += 1;
         if (conflictOnce && setCount === 1) {
           doc.value = { groups: [{ id: 'remote', name: 'Remote', folded: false }], in: { remote: [] }, defaultFolded: false, at: 1 };
@@ -610,6 +611,138 @@ function testFilterAndParkedStore() {
   assert.equal(kent.normPath('/tmp/one//'), '/tmp/one');
 }
 
+async function testParkedFollowsMachineDocument() {
+  const core = fakeCore();
+  const clientA = loadKent({ machineList: [{ name: '4090', layout: 'ready' }], execImpl: core.exec });
+  const a = clientA.kent;
+  a.machineStore('4090');
+  assert.equal(a.rememberProject({ machine: '4090', folder: '/work/site/', name: 'Site', group: 'g1' }), true);
+  let st = a.machineStore('4090');
+  while (st.queue.length) await a.processGroupOp(st, st.queue.shift());
+  const doc = core.getDoc('4090');
+  assert.equal(doc.value.projects.length, 1);
+  assert.equal(doc.value.projects[0].folder, '/work/site/');
+  assert.equal(doc.value.projects[0].name, 'Site');
+
+  // A second client with an empty local drawer still sees the parked folder.
+  const clientB = loadKent({ machineList: [{ name: '4090', layout: 'ready' }], execImpl: core.exec });
+  const b = clientB.kent;
+  b.machineStore('4090');
+  const tasks = [];
+  const cx = { spawn(fn) { const p = fn(cx); tasks.push(p); return p; }, notify() {} };
+  b.refreshGroupDocs(cx, { hiddenOk: true });
+  while (tasks.length) await tasks.shift();
+  assert.deepEqual(b.projectEntries('4090').map((p) => p.folder), ['/work/site/']);
+  assert.ok(clientB.storage[PROJECTS_KEY], 'the local fallback mirrors the document');
+
+  // Forgetting it on B removes it from the document and from A after a refresh.
+  assert.equal(b.forgetProject('4090', '/work/site/'), true);
+  st = b.machineStore('4090');
+  while (st.queue.length) await b.processGroupOp(st, st.queue.shift());
+  assert.deepEqual(core.getDoc('4090').value.projects, []);
+  st = a.machineStore('4090');
+  a.refreshGroupDocs(cx, { hiddenOk: true });
+  while (tasks.length) await tasks.shift();
+  assert.deepEqual(a.projectEntries('4090'), []);
+}
+
+async function testParkedMigratesFromLocalDrawer() {
+  const core = fakeCore();
+  // A client that already migrated its groups: its local drawer goes in once.
+  const storage = {
+    [PROJECTS_KEY]: JSON.stringify({ '4090': [{ folder: '/old/p', name: 'Old', at: 7 }] }),
+  };
+  const sharedData = { [MIGRATED_KEY]: { '4090': 1 } };
+  const { kent } = loadKent({
+    sharedData,
+    storage,
+    machineList: [{ name: '4090', layout: 'ready' }],
+    execImpl: core.exec,
+  });
+  const st = kent.machineStore('4090');
+  assert.equal(st.queue[0]?.intent.type, 'parkMigrate', 'a separate parked migration is queued');
+  await kent.processGroupOp(st, st.queue.shift());
+  assert.equal(core.getDoc('4090').value.projects[0].folder, '/old/p');
+  assert.ok(sharedData['kent.parked.sync.migrated']?.['4090'], 'the parked marker is written');
+
+  // A new client with a local drawer but no migrated groups: one migration
+    // carries both groups and Parked.
+  const fresh = fakeCore();
+  const { kent: freshKent } = loadKent({
+    storage: {
+      [PROJECTS_KEY]: JSON.stringify({ '4090': [{ folder: '/new/p', name: 'New', at: 9 }] }),
+    },
+    machineList: [{ name: '4090', layout: 'ready' }],
+    execImpl: fresh.exec,
+  });
+  const freshStore = freshKent.machineStore('4090');
+  assert.equal(freshStore.queue.length, 1);
+  assert.equal(freshStore.queue[0].intent.type, 'migration');
+  await freshKent.processGroupOp(freshStore, freshStore.queue.shift());
+  assert.equal(fresh.getDoc('4090').value.projects[0].folder, '/new/p');
+}
+
+async function testParkedMigrationKeepsNewest() {
+  const core = fakeCore();
+  const doc = core.getDoc('4090');
+  doc.value = {
+    groups: [],
+    in: {},
+    defaultFolded: false,
+    projects: [
+      { folder: '/same', name: 'Remote', at: 10 },
+      { folder: '/remote-only', name: 'Remote only', at: 5 },
+    ],
+    at: 1,
+  };
+  const storage = {
+    [PROJECTS_KEY]: JSON.stringify({
+      '4090': [
+        { folder: '/same/', name: 'Local', at: 7 },
+        { folder: '/local-only', name: 'Local only', at: 8 },
+      ],
+    }),
+  };
+  const sharedData = { [MIGRATED_KEY]: { '4090': 1 } };
+  const { kent } = loadKent({
+    sharedData,
+    storage,
+    machineList: [{ name: '4090', layout: 'ready' }],
+    execImpl: core.exec,
+  });
+  const st = kent.machineStore('4090');
+  assert.equal(st.queue[0]?.intent.type, 'parkMigrate');
+  await kent.processGroupOp(st, st.queue.shift());
+  const projects = core.getDoc('4090').value.projects;
+  assert.deepEqual(projects.map((p) => p.folder).sort(), ['/local-only', '/remote-only', '/same']);
+  assert.equal(projects.find((p) => p.folder === '/same')?.name, 'Remote', 'the newer remote entry wins');
+}
+
+async function testParkedCacheDoesNotRemigrate() {
+  const core = fakeCore();
+  const sharedData = {
+    [MIGRATED_KEY]: { '4090': 1 },
+    'kent.parked.sync.migrated': { '4090': 1 },
+  };
+  const stale = { [PROJECTS_KEY]: JSON.stringify({ '4090': [{ folder: '/stale', name: 'Stale', at: 1 }] }) };
+  const { kent } = loadKent({
+    sharedData,
+    storage: stale,
+    machineList: [{ name: '4090', layout: 'ready' }],
+    execImpl: core.exec,
+  });
+  const st = kent.machineStore('4090');
+  assert.equal(st.queue.length, 0, 'the local mirror is not queued as a second migration');
+  assert.deepEqual(st.data.projects.map((p) => p.folder), ['/stale'], 'the stale cache still renders until a refresh');
+  // Once the document is read, its empty drawer replaces the stale cache.
+  const tasks = [];
+  const cx = { spawn(fn) { const p = fn(cx); tasks.push(p); return p; }, notify() {} };
+  kent.refreshGroupDocs(cx, { hiddenOk: true });
+  while (tasks.length) await tasks.shift();
+  assert.deepEqual(kent.projectEntries('4090'), []);
+  assert.deepEqual(JSON.parse(stale[PROJECTS_KEY] ?? '{}'), {});
+}
+
 function testAgentAndParkedMachines() {
   const agentsList = [
     { address: 'om36/t1', status: 'idle', space_name: 'deliver' },
@@ -765,6 +898,10 @@ async function testWaitGroupDocEventStopsProducer() {
   testSyncWorkerAdoption();
   testFilterAndParkedStore();
   testAgentAndParkedMachines();
+  await testParkedFollowsMachineDocument();
+  await testParkedMigratesFromLocalDrawer();
+  await testParkedMigrationKeepsNewest();
+  await testParkedCacheDoesNotRemigrate();
   testParseGroupDocEvents();
   await testWaitGroupDocEventStopsProducer();
   await testRefreshQueuedWhenEventArrivesDuringPoll();

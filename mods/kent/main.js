@@ -117,6 +117,7 @@ export function tone(t, status) {
 const STORE = "kent.groups.v1";
 const GROUP_DOC = "kent.groups.v1";
 const MIGRATED_KEY = "kent.groups.sync.migrated";
+const PARKED_MIGRATED_KEY = "kent.parked.sync.migrated";
 const PENDING_KEY = "kent.groups.pending.v1";
 const VERSIONS_KEY = "kent.groups.sync.versions";
 const PROJECTS_KEY = "kent.projects.v1";
@@ -161,26 +162,50 @@ function cleanProject(p) {
   };
 }
 
-function projectEntries(machine) {
-  const all = readProjects();
-  const list = Array.isArray(all[machine ?? ""]) ? all[machine ?? ""] : [];
+function projectList(list) {
   const seen = new Set();
   const out = [];
-  for (const raw of list) {
+  for (const raw of Array.isArray(list) ? list : []) {
     const p = cleanProject(raw);
     if (!p) continue;
-    const key = projectKeyOf(machine, p.folder);
+    const key = normPath(p.folder);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(p);
   }
-  return out;
+  return out.sort((a, b) => b.at - a.at).slice(0, PROJECT_CAP);
 }
 
-function saveProjectEntries(machine, list) {
+// Merge one client's local drawer into a machine document once. Both sides stay;
+// the newest `at` wins for the same folder, and the drawer stays capped.
+function mergeProjectLists(current, incoming) {
+  const byFolder = new Map();
+  for (const raw of [...(current ?? []), ...(incoming ?? [])]) {
+    const p = cleanProject(raw);
+    if (!p) continue;
+    const key = normPath(p.folder);
+    const known = byFolder.get(key);
+    if (!known || p.at > known.at) byFolder.set(key, p);
+  }
+  return [...byFolder.values()].sort((a, b) => b.at - a.at).slice(0, PROJECT_CAP);
+}
+
+// This client's copy, the fallback for old cores and the migration source.
+function localProjectEntries(machine) {
+  const all = readProjects();
+  return projectList(all[machine ?? ""]);
+}
+
+// The machine document's drawer, cached like groups so the list stays synchronous.
+function projectEntries(machine) {
+  return machineStore(machine).data.projects;
+}
+
+function writeProjectCache(machine, list) {
   const all = readProjects();
   const key = machine ?? "";
-  const clean = list.map(cleanProject).filter(Boolean).slice(0, PROJECT_CAP);
+  const clean = projectList(list);
+  if (JSON.stringify(all[key] ?? []) === JSON.stringify(clean)) return;
   if (clean.length) all[key] = clean;
   else delete all[key];
   writeProjects(all);
@@ -190,8 +215,6 @@ function saveProjectEntries(machine, list) {
 // and a folder already in the drawer is refreshed rather than duplicated.
 function rememberProject({ machine = null, folder, name = "", named = false, group = null }) {
   if (!normPath(folder)) return false;
-  const list = projectEntries(machine);
-  const key = projectKeyOf(machine, folder);
   const item = cleanProject({
     folder,
     name: name || projectTail(folder),
@@ -199,18 +222,14 @@ function rememberProject({ machine = null, folder, name = "", named = false, gro
     group,
     at: Date.now(),
   });
-  const next = [item, ...list.filter((p) => projectKeyOf(machine, p.folder) !== key)];
-  saveProjectEntries(machine, next);
-  return true;
+  if (!item) return false;
+  return enqueueGroupOp(machine, { type: "park", item }, { label: "park folder" });
 }
 
 function forgetProject(machine, folder) {
-  const key = projectKeyOf(machine, folder);
-  const list = projectEntries(machine);
-  const next = list.filter((p) => projectKeyOf(machine, p.folder) !== key);
-  if (next.length === list.length) return false;
-  saveProjectEntries(machine, next);
-  return true;
+  const key = normPath(folder);
+  if (!machineStore(machine).data.projects.some((p) => normPath(p.folder) === key)) return false;
+  return enqueueGroupOp(machine, { type: "unpark", folder }, { label: "forget parked folder" });
 }
 
 // Machines added with `hc machine add --temp` stay out of `machines()` and
@@ -300,7 +319,7 @@ function copyMachineData(data) {
 }
 
 function emptyMachineData() {
-  return { groups: [], in: {}, defaultFolded: false, at: 0 };
+  return { groups: [], in: {}, defaultFolded: false, projects: [], at: 0 };
 }
 
 // One machine's canonical document. A bare space id is in at most one group's
@@ -341,7 +360,8 @@ function normalizeMachineData(raw, machine = null) {
   else if (source.defaultFolded && typeof source.defaultFolded === "object" && !Array.isArray(source.defaultFolded)) {
     defaultFolded = Boolean(source.defaultFolded[machine ?? ""]);
   }
-  return { groups, in: membership, defaultFolded, at: typeof source.at === "number" ? source.at : 0 };
+  const projects = projectList(source.projects);
+  return { groups, in: membership, defaultFolded, projects, at: typeof source.at === "number" ? source.at : 0 };
 }
 
 // The old shared-store shape, still used as a migration source and as a local
@@ -395,11 +415,13 @@ function legacyMachineData(machine) {
     data.in[g.id] = (legacy.in[g.id] ?? []).map((id) => machine && id.includes("/") ? id.slice(id.indexOf("/") + 1) : id);
   }
   data.defaultFolded = Boolean(legacy.defaultFolded[machine ?? ""]);
+  data.projects = localProjectEntries(machine);
   return normalizeMachineData(data, machine);
 }
 
 function hasLegacyData(data) {
-  return Boolean(data.groups.length || data.defaultFolded || Object.values(data.in).some((list) => list.length));
+  return Boolean(data.groups.length || data.defaultFolded || data.projects.length
+    || Object.values(data.in).some((list) => list.length));
 }
 
 function migrationMarks() {
@@ -421,6 +443,27 @@ function resetMigrationDone(machine) {
   const marks = migrationMarks();
   delete marks[machine ?? ""];
   setShared(MIGRATED_KEY, marks);
+}
+
+function parkedMigrationMarks() {
+  const marks = shared(PARKED_MIGRATED_KEY);
+  return marks && typeof marks === "object" && !Array.isArray(marks) ? { ...marks } : {};
+}
+
+function parkedMigrationDone(machine) {
+  return Boolean(parkedMigrationMarks()[machine ?? ""]);
+}
+
+function markParkedMigrationDone(machine) {
+  const marks = parkedMigrationMarks();
+  marks[machine ?? ""] = Date.now();
+  setShared(PARKED_MIGRATED_KEY, marks);
+}
+
+function resetParkedMigrationDone(machine) {
+  const marks = parkedMigrationMarks();
+  delete marks[machine ?? ""];
+  setShared(PARKED_MIGRATED_KEY, marks);
 }
 
 
@@ -475,6 +518,11 @@ function mergeLegacyData(data, legacy) {
       changed = true;
     }
   }
+  const projects = mergeProjectLists(data.projects, legacy.projects);
+  if (JSON.stringify(projects) !== JSON.stringify(data.projects)) {
+    data.projects = projects;
+    changed = true;
+  }
   // A written document's false is an intentional state, not merely a missing
   // value. Only the first migration onto an unwritten document carries the old
   // default group's fold flag over.
@@ -523,6 +571,30 @@ function queueMigration(st) {
   wakeGroupSync();
 }
 
+// A client that already migrated its groups still has Parked folders only in
+// its local drawer. Merge them into its machine document once, separately, so
+// the older migration marker does not hide them.
+function queueParkedMigration(st) {
+  if (checking() || parkedMigrationDone(st.machine) || st.parkMigrateQueued) return;
+  // The first group migration already carries the local drawer, because
+  // legacyMachineData now includes it; let that one finish.
+  if (!migrationDone(st.machine)) return;
+  const projects = st.legacy.projects;
+  if (!projects.length) {
+    markParkedMigrationDone(st.machine);
+    return;
+  }
+  st.parkMigrateQueued = true;
+  st.queue.push({
+    id: `parkmigrate-${st.machine ?? "local"}-${Date.now().toString(36)}`,
+    intent: { type: "parkMigrate", projects },
+    label: "migrate Parked folders",
+    parkedMigration: true,
+    apply: (data) => applyGroupIntent(st.machine, { type: "parkMigrate", projects }, data),
+  });
+  wakeGroupSync();
+}
+
 function machineStore(machine) {
   machine = machine ?? null;
   let st = groupSync.stores.get(machine);
@@ -539,6 +611,7 @@ function machineStore(machine) {
     retryAt: 0,
     refreshAfter: 0,
     migrateQueued: false,
+    parkMigrateQueued: false,
     regressionSince: 0,
     error: null,
     errorKind: null,
@@ -546,6 +619,7 @@ function machineStore(machine) {
   };
   groupSync.stores.set(machine, st);
   queueMigration(st);
+  queueParkedMigration(st);
   restorePendingGroupOps(st);
   return st;
 }
@@ -689,6 +763,26 @@ function applyGroupIntent(machine, intent, data) {
       pruneMachineData(data, machine);
       return JSON.stringify(data.in) !== before ? data : null;
     }
+    case "park": {
+      const item = cleanProject(intent.item);
+      if (!item) return null;
+      const before = JSON.stringify(data.projects);
+      const key = normPath(item.folder);
+      data.projects = [item, ...(data.projects ?? []).filter((p) => normPath(p.folder) !== key)]
+        .slice(0, PROJECT_CAP);
+      return JSON.stringify(data.projects) !== before ? data : null;
+    }
+    case "unpark": {
+      const before = JSON.stringify(data.projects);
+      const key = normPath(intent.folder);
+      data.projects = (data.projects ?? []).filter((p) => normPath(p.folder) !== key);
+      return JSON.stringify(data.projects) !== before ? data : null;
+    }
+    case "parkMigrate": {
+      const before = JSON.stringify(data.projects);
+      data.projects = mergeProjectLists(data.projects, intent.projects);
+      return JSON.stringify(data.projects) !== before ? data : null;
+    }
     case "prune": {
       const before = JSON.stringify(data.in);
       pruneMachineData(data, machine);
@@ -762,7 +856,15 @@ function rewriteQueuedGroupOps(st, map) {
 function finishMigration(st, op, data) {
   rewriteQueuedGroupOps(st, legacyGroupIdMap(op.intent?.legacy, data));
   markMigrationDone(st.machine);
+  // The same operation carried the local Parked drawer, so no second migration.
+  markParkedMigrationDone(st.machine);
   st.migrateQueued = false;
+  st.parkMigrateQueued = false;
+}
+
+function finishParkedMigration(st, op) {
+  markParkedMigrationDone(st.machine);
+  st.parkMigrateQueued = false;
 }
 
 function applyGroupOp(op, data) {
@@ -801,6 +903,9 @@ function enqueueGroupOp(machine, intent, {
     // while a render is reading the store. Avoid a nested shared-state write
     // there; normal user operations still update the compatibility snapshot.
     if (persist) writeLegacySnapshot();
+    if (intent.type === "park" || intent.type === "unpark" || intent.type === "parkMigrate") {
+      writeProjectCache(st.machine, st.data.projects);
+    }
   }
   st.queue.push(op);
   wakeGroupSync();
@@ -997,13 +1102,17 @@ function rebuildOptimistic(st, authoritative) {
 }
 
 function queueCoreResetRepair(st) {
-  // Reset the migration marker first: if the app dies halfway through this
+  // Reset the migration markers first: if the app dies halfway through this
   // repair, the compatibility snapshot must be eligible to migrate again.
   resetMigrationDone(st.machine);
+  resetParkedMigrationDone(st.machine);
   resetRememberedDocVersion(st.machine);
+  st.migrateQueued = false;
+  st.parkMigrateQueued = false;
   const repair = copyMachineData(st.data);
   if (!hasLegacyData(repair)) {
     markMigrationDone(st.machine);
+    markParkedMigrationDone(st.machine);
     return false;
   }
   st.queue.unshift({
@@ -1040,6 +1149,7 @@ function adoptRemote(st, authoritative, version) {
     queueCoreResetRepair(st);
   } else st.regressionSince = 0;
   const before = JSON.stringify({ groups: st.data.groups, in: st.data.in, defaultFolded: st.data.defaultFolded });
+  const beforeProjects = JSON.stringify(st.data.projects);
   st.version = version;
   st.loaded = true;
   st.error = null;
@@ -1052,6 +1162,7 @@ function adoptRemote(st, authoritative, version) {
   // current is what lets Kent behave like the old local version while a core
   // is unreachable or too old for documents.
   if (after !== before) writeLegacySnapshot();
+  if (JSON.stringify(st.data.projects) !== beforeProjects) writeProjectCache(st.machine, st.data.projects);
 }
 
 async function processGroupOp(st, op) {
@@ -1080,6 +1191,7 @@ async function processGroupOp(st, op) {
       adoptRemote(st, remote, current.version);
       clearPendingGroupOp(st.machine, op.id);
       if (op.migration) finishMigration(st, op, remote);
+      if (op.parkedMigration) finishParkedMigration(st, op);
       return;
     }
     const clean = normalizeMachineData(next, st.machine);
@@ -1089,6 +1201,7 @@ async function processGroupOp(st, op) {
       adoptRemote(st, clean, written.version);
       clearPendingGroupOp(st.machine, op.id);
       if (op.migration) finishMigration(st, op, clean);
+      if (op.parkedMigration) finishParkedMigration(st, op);
       return;
     } catch (e) {
       if (!isConflict(e)) throw e;
