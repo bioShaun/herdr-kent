@@ -1,0 +1,22 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Manifest matches the files
+        run: python3 scripts/build-manifest.py --check
+      - name: Shared copies and JSON stay valid
+        run: python3 scripts/check.py --no-herdr
+      - name: Updater unit tests
+        run: node scripts/test-update.js
+      - name: Group sync unit tests
+        run: node scripts/test-group-sync.js

@@ -131,7 +131,7 @@ P2 的 Archive、组色/起始目录、Collect from 规则与 worktree 折叠/�
 
 #### 推荐实现细节
 - 新增一个极简无依赖的校验脚本 `scripts/check.py`（或 `scripts/sync-shared.py`）：
-  - 默认校验模式：检查 `mods/kent/icon-chip.js` 与 `mods/kent-agents/icon-chip.js`、`mods/kent/icon-metrics.js` 与 `mods/kent-agents/icon-metrics.js` 字节一致；同时校验 JSON 文件合法性，可选自动运行 `herdr-app check mods/kent` 与 `herdr-app check mods/kent-agents`。
+  - 默认校验模式：检查 `mods/kent/icon-chip.js` 与 `mods/kent-agents/icon-chip.js`、`mods/kent/icon-metrics.js` 与 `mods/kent-agents/icon-metrics.js` 字节一致；同时校验 JSON 文件和 manifest 合法性，可选自动运行 `herdr-app check` 检查三个 mod。
   - `--sync` 模式：以 `mods/kent/icon-chip.js` 为源同步到 `mods/kent-agents/icon-chip.js`。
 - 不使用符号链接（symlink），因为手动 `cp`、部分打包工具或 Windows 环境对 symlink 兼容性差。
 - 在 `README.md` / `README.zh-CN.md` 的 Development 章节补充一行校验命令。
@@ -184,7 +184,7 @@ P2 的 Archive、组色/起始目录、Collect from 规则与 worktree 折叠/�
 #### 验收标准
 - 弹窗空输入无法提交，同机器重名时有明确提示；正常输入回车/点击提交生效。
 - 单个分组的右键菜单不出现无效的 `Move up` / `Move down`；首/末分组仅展示有效方向。
-- `herdr-app check mods/kent` 和 `herdr-app check mods/kent-agents` 均通过。
+- `herdr-app check mods/kent`、`herdr-app check mods/kent-agents` 和 `herdr-app check mods/kent-updater` 均通过；`python3 scripts/build-manifest.py --check` 通过。
 
 ---
 
@@ -220,6 +220,8 @@ P2 的 Archive、组色/起始目录、Collect from 规则与 worktree 折叠/�
 实施完成后统一执行：
 - `herdr-app check mods/kent`
 - `herdr-app check mods/kent-agents`
+- `herdr-app check mods/kent-updater`
+- `python3 scripts/build-manifest.py --check`
 - `python3 scripts/check.py`（若落地 S-5）
 - `python3 -m py_compile scripts/*.py`
 - `uv run --with svgpathtools python scripts/generate-icon-metrics.py`

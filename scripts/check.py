@@ -4,8 +4,8 @@
 Herdr installs each mod from its own directory, so both mods keep their own
 copy of icon-chip.js and icon-metrics.js. icon-metrics.js is regenerated into
 both places at once; icon-chip.js is maintained by hand and can drift. This
-script fails when the pairs differ, validates the JSON files, and runs
-`herdr-app check` on disposable copies of both mods when the binary is
+script fails when the pairs differ, validates the JSON files and the manifest, and runs
+`herdr-app check` on disposable copies of all mods when the binary is
 available. The copies keep Herdr's generated editor files out of the repository.
 
 Run from anywhere with:
@@ -31,8 +31,10 @@ PAIRS = [
 JSON_FILES = [
     ROOT / "layouts" / "kent.json",
     ROOT / "keys.json",
+    ROOT / "manifest.json",
     ROOT / "mods" / "kent" / "mod.json",
     ROOT / "mods" / "kent-agents" / "mod.json",
+    ROOT / "mods" / "kent-updater" / "mod.json",
 ]
 # Editor support files Herdr generates and .gitignore keeps out of the repository,
 # so a fresh clone has none: validate them when present, never require them.
@@ -40,7 +42,7 @@ GENERATED_JSON = [
     ROOT / "mods" / "kent" / "jsconfig.json",
     ROOT / "mods" / "kent-agents" / "jsconfig.json",
 ]
-MODS = ["kent", "kent-agents"]
+MODS = ["kent", "kent-agents", "kent-updater"]
 
 
 def check_pairs():
@@ -64,6 +66,17 @@ def invalid_json(path):
     except json.JSONDecodeError as exc:
         return [f"{path.relative_to(ROOT)}: invalid JSON: {exc}"]
     return []
+
+
+def check_manifest():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "build-manifest.py"), "--check"],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return []
+    return [f"manifest.json: {(result.stdout or result.stderr).strip()}"]
 
 
 def check_json():
@@ -134,14 +147,14 @@ def main():
     if args.sync:
         return sync()
 
-    problems = check_pairs() + check_json()
+    problems = check_pairs() + check_json() + check_manifest()
     if not args.no_herdr:
         problems += check_mods()
     if problems:
         for problem in problems:
             print(f"check: {problem}", file=sys.stderr)
         return 1
-    print("check passed: shared copies in sync, JSON valid" + (", mods load" if not args.no_herdr and shutil.which("herdr-app") else ""))
+    print("check passed: shared copies in sync, JSON and manifest valid" + (", mods load" if not args.no_herdr and shutil.which("herdr-app") else ""))
     return 0
 
 

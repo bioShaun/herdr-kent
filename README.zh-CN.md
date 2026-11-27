@@ -41,18 +41,21 @@ cd herdr-kent
 scripts/install.sh
 ```
 
-`scripts/install.sh` 会把 layout 和两个 mod 复制到 `~/.config/herdr-app`（设置了 `HERDR_APP_HOME` 就用它，也可以把目标目录作为参数传入），被替换的文件先备份到 `<herdr-home>/kent-backup-<时间>/`，然后对装好的 mod 运行 `herdr-app check`。它不会动 `keys.json`。
+`scripts/install.sh` 会把 layout 和三个 mod 复制到 `~/.config/herdr-app`（设置了 `HERDR_APP_HOME` 就用它，也可以把目标目录作为参数传入），被替换的文件先备份到 `<herdr-home>/kent-backup-<时间>/`，然后对装好的 mod 运行 `herdr-app check`。它还会把 `manifest.json` 装成 `kent-version.json`，作为更新器的版本标记。它不会动 `keys.json`。
 
 也可以手动复制同样的文件（使用自定义 `HERDR_APP_HOME` 时，把 `~/.config/herdr-app` 换成你的目录）：
 
 ```sh
 cp layouts/kent.json layouts/kent.svg ~/.config/herdr-app/layouts/
-mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
-cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
+mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents ~/.config/herdr-app/mods/kent-updater
+cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js mods/kent/update-check.js ~/.config/herdr-app/mods/kent/
 cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
+cp mods/kent-updater/main.js mods/kent-updater/mod.json mods/kent-updater/core.js mods/kent-updater/updater.js ~/.config/herdr-app/mods/kent-updater/
+cp manifest.json ~/.config/herdr-app/kent-version.json
 
 herdr-app check ~/.config/herdr-app/mods/kent
 herdr-app check ~/.config/herdr-app/mods/kent-agents
+herdr-app check ~/.config/herdr-app/mods/kent-updater
 ```
 
 然后切换到这个 layout：
@@ -66,6 +69,16 @@ herdr-app do layout.switch '{"name":"kent"}'
 ```sh
 herdr-app do layout.switch '{"name":"main"}'
 ```
+
+## 更新
+
+Herdr 把共享 layout 当成普通文件复制，不会自动更新，所以 Kent 自带一个小更新器，不依赖 Gallery 推送。
+
+- **检查。** `mods/kent-updater` 在启动时、之后每 6 小时读取本仓库 `main` 分支上的 `manifest.json`。有新版本时，`Spaces` 旁边出现紫色的 `↑ 1.2.3` 小标签，同时弹通知，命令面板里也有 **Check for Kent updates**。
+- **安装。** 点 **Update now** 后，它按 manifest 逐个下载文件，校验 SHA-256 和大小，把 mod 文件放进一个临时 Herdr home 里跑 `herdr-app check`，通过后才备份现有文件到 `<herdr-home>/kent-backup-<时间>/`，再写入。任何一步失败都会回滚已写入的文件；`kent-version.json` 最后才写，所以中途中断不会谎称“已经是最新”。
+- **范围。** 只覆盖 `layouts/kent.json`、`layouts/kent.svg`、`mods/kent` 和 `mods/kent-agents`。`mods/kent-updater` 是引导器，永远不参与更新；`keys.json`、其他 layout 和其他 mod 都不动。你对手改过的这些文件的修改会被覆盖：请把改动留在 clone（`herdr-app do layout.clone '{"name":"kent","as":"my-kent"}'`）或 fork 里。
+- **网络。** 只访问 GitHub：每次检查一次 commit 查询加一个小 manifest，点更新时才下载文件；不会发送任何关于你的信息。下载的每个文件都按 manifest 校验，但 manifest 本身没有签名；只在信任这个仓库时安装。
+- **发版。** 提高 `version` 和 `notes`，运行 `python3 scripts/build-manifest.py --version X.Y.Z --notes "改了什么"`，提交 `manifest.json`。CI 会跑 `python3 scripts/build-manifest.py --check`，manifest 过期就失败。
 
 ## 可选快捷键
 

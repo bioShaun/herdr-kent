@@ -1,0 +1,64 @@
+{
+  "version": "1.0.0",
+  "channel": "stable",
+  "minHerdr": "0.1.18",
+  "notes": "Verified self-update; community P1 improvements (folded counts, needs-you, Parked, filter, placement).",
+  "files": [
+    {
+      "path": "layouts/kent.json",
+      "sha256": "482e36055800efe843da30aa9d854144ca8cc626e58f123eee18ac5087dd41e5",
+      "size": 4240
+    },
+    {
+      "path": "layouts/kent.svg",
+      "sha256": "9c3ca472c2d5f8947ca83d6e2b8ddec2c5e41a3b7e9e98b0df9b4104b8faddbc",
+      "size": 3287
+    },
+    {
+      "path": "mods/kent-agents/icon-chip.js",
+      "sha256": "ff7f499f8dbaf21f6c34b2647937aa8b85d6c1a1072293484d50afe17846ec6b",
+      "size": 4761
+    },
+    {
+      "path": "mods/kent-agents/icon-metrics.js",
+      "sha256": "fb26d0a5e7fb57585ec94fcf73875575b8553c11396f53d2e8ce3f39dbcee0f1",
+      "size": 6811
+    },
+    {
+      "path": "mods/kent-agents/main.js",
+      "sha256": "8f35462fb3df96693f06c809cd557b79585b93849b8de19620b95b2c371a9f19",
+      "size": 26858
+    },
+    {
+      "path": "mods/kent-agents/mod.json",
+      "sha256": "4625f13e2f5230498f0b81615d35fcd339b96ee551560c763493fa344240d93b",
+      "size": 44
+    },
+    {
+      "path": "mods/kent/icon-chip.js",
+      "sha256": "ff7f499f8dbaf21f6c34b2647937aa8b85d6c1a1072293484d50afe17846ec6b",
+      "size": 4761
+    },
+    {
+      "path": "mods/kent/icon-metrics.js",
+      "sha256": "fb26d0a5e7fb57585ec94fcf73875575b8553c11396f53d2e8ce3f39dbcee0f1",
+      "size": 6811
+    },
+    {
+      "path": "mods/kent/main.js",
+      "sha256": "cf1a44e78bed29355fbbee2a69d18e2cafde1add4dd07ed459845d5e7ebbf491",
+      "size": 136474
+    },
+    {
+      "path": "mods/kent/mod.json",
+      "sha256": "d27cea3f0626c3188c8725ca72a3cfae4c4a115f298fa0003d99280eed464253",
+      "size": 493
+    },
+    {
+      "path": "mods/kent/update-check.js",
+      "sha256": "61f1f47a508c58673b860579c6e935b5c3670e887bdf4ff115ea7c5ef7c2b1b8",
+      "size": 4701
+    }
+  ],
+  "deleted": []
+}

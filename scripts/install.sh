@@ -1,7 +1,7 @@
 #!/bin/sh
-# Install Kent into a Herdr home: the layout, its thumbnail and the two mods, then
-# check that both mods load from there. Herdr reloads changed layouts and mods in
-# place, so a running window picks the new files up without a restart.
+# Install Kent into a Herdr home: the layout, its thumbnail and the three mods,
+# then check that all of them load from there. Herdr reloads changed layouts and
+# mods in place, so a running window picks the new files up without a restart.
 #
 #   scripts/install.sh               ~/.config/herdr-app, or $HERDR_APP_HOME when set
 #   scripts/install.sh <herdr-home>  that directory instead
@@ -49,6 +49,14 @@ for mod in kent kent-agents; do
     put "mods/$mod/$file" "mods/$mod/$file"
   done
 done
+put mods/kent/update-check.js mods/kent/update-check.js
+for file in main.js mod.json core.js updater.js; do
+  put "mods/kent-updater/$file" "mods/kent-updater/$file"
+done
+# The installed copy of the manifest is the updater's version marker. It is
+# written after the files, and an update rewrites it only when everything else
+# has landed.
+put manifest.json kent-version.json
 if [ -d "$backup" ]; then
   echo "Replaced files are kept in $backup"
 fi
@@ -56,10 +64,12 @@ fi
 if command -v herdr-app >/dev/null 2>&1; then
   HERDR_APP_HOME="$home" herdr-app check "$home/mods/kent"
   HERDR_APP_HOME="$home" herdr-app check "$home/mods/kent-agents"
+  HERDR_APP_HOME="$home" herdr-app check "$home/mods/kent-updater"
 else
   echo "herdr-app is not on PATH; run these to check the installed mods:"
   echo "  HERDR_APP_HOME=\"$home\" herdr-app check \"$home/mods/kent\""
   echo "  HERDR_APP_HOME=\"$home\" herdr-app check \"$home/mods/kent-agents\""
+  echo "  HERDR_APP_HOME=\"$home\" herdr-app check \"$home/mods/kent-updater\""
 fi
 
 if [ -f "$home/keys.json" ] && ! grep -q '"layout:kent"' "$home/keys.json"; then

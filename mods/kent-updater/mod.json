@@ -1,0 +1,18 @@
+{
+  "place": "none",
+  "title": "Kent updates",
+  "overlay": {
+    "kind": "window",
+    "key": "kent-updater",
+    "width": 560,
+    "height": 430
+  },
+  "palette": [
+    {
+      "title": "Check for Kent updates",
+      "command": "mod.open",
+      "args": { "name": "kent-updater" },
+      "words": "kent layout update upgrade version"
+    }
+  ]
+}

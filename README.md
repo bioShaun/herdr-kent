@@ -41,18 +41,21 @@ cd herdr-kent
 scripts/install.sh
 ```
 
-`scripts/install.sh` copies the layout and both mods into `~/.config/herdr-app` — or into `$HERDR_APP_HOME` when that is set, or into the directory given as its argument — keeps a copy of every file it replaces in `<herdr-home>/kent-backup-<time>/`, and runs `herdr-app check` on the installed mods. It does not touch `keys.json`.
+`scripts/install.sh` copies the layout and its three mods into `~/.config/herdr-app` — or into `$HERDR_APP_HOME` when that is set, or into the directory given as its argument — keeps a copy of every file it replaces in `<herdr-home>/kent-backup-<time>/`, and runs `herdr-app check` on the installed mods. It also installs `manifest.json` as `kent-version.json`, the updater's version marker. It does not touch `keys.json`.
 
 The same files by hand (a custom `HERDR_APP_HOME` replaces `~/.config/herdr-app`):
 
 ```sh
 cp layouts/kent.json layouts/kent.svg ~/.config/herdr-app/layouts/
-mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents
-cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js ~/.config/herdr-app/mods/kent/
+mkdir -p ~/.config/herdr-app/mods/kent ~/.config/herdr-app/mods/kent-agents ~/.config/herdr-app/mods/kent-updater
+cp mods/kent/main.js mods/kent/mod.json mods/kent/icon-chip.js mods/kent/icon-metrics.js mods/kent/update-check.js ~/.config/herdr-app/mods/kent/
 cp mods/kent-agents/main.js mods/kent-agents/mod.json mods/kent-agents/icon-chip.js mods/kent-agents/icon-metrics.js ~/.config/herdr-app/mods/kent-agents/
+cp mods/kent-updater/main.js mods/kent-updater/mod.json mods/kent-updater/core.js mods/kent-updater/updater.js ~/.config/herdr-app/mods/kent-updater/
+cp manifest.json ~/.config/herdr-app/kent-version.json
 
 herdr-app check ~/.config/herdr-app/mods/kent
 herdr-app check ~/.config/herdr-app/mods/kent-agents
+herdr-app check ~/.config/herdr-app/mods/kent-updater
 ```
 
 Then show the layout:
@@ -66,6 +69,16 @@ Your existing `main` layout is not modified. Use `ctrl-shift-l` / `cmd-shift-l` 
 ```sh
 herdr-app do layout.switch '{"name":"main"}'
 ```
+
+## Update
+
+Herdr installs a shared layout as a plain copy, so Kent carries a small updater of its own instead of waiting for the Gallery to push one.
+
+- **Check.** `mods/kent-updater` reads `manifest.json` on this repository's `main` branch at start and every six hours. A new version shows as a violet `↑ 1.2.3` chip beside `Spaces`, a toast, and the palette entry **Check for Kent updates**.
+- **Install.** **Update now** downloads every file the manifest names, checks its SHA-256 and size, stages the mod files in a throwaway Herdr home, runs `herdr-app check` on both staged mods, backs up the installed files to `<herdr-home>/kent-backup-<time>/`, and only then writes. A failed step rolls the written files back; `kent-version.json` is written last, so an interrupted update keeps asking to be retried instead of claiming it is current.
+- **Scope.** It overwrites `layouts/kent.json`, `layouts/kent.svg`, `mods/kent` and `mods/kent-agents`. `mods/kent-updater` is the bootstrap and is never updated; `keys.json`, other layouts and other mods are untouched. Your edits to the managed files are overwritten: keep them in a clone (`herdr-app do layout.clone '{"name":"kent","as":"my-kent"}'`) or a fork.
+- **Network.** Only GitHub is contacted: one commit lookup and one small manifest at each check, then the changed files when you press Update. Nothing about you is sent. Every downloaded file is verified against the manifest, but the manifest itself is not signed; install only if you trust this repository.
+- **Releasing.** Raise `version` and `notes`, then run `python3 scripts/build-manifest.py --version X.Y.Z --notes "what changed"` and commit `manifest.json`. CI runs `python3 scripts/build-manifest.py --check` and fails when the manifest is stale.
 
 ## Optional keys
 

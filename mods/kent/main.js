@@ -6,6 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
 import { spaces, machines, panes, agents, run, openOverlay, closeOverlay, props, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, checking, settings } from "herdr";
 import { iconChip } from "./icon-chip.js";
+import { checkKentUpdate } from "./update-check.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -1291,6 +1292,14 @@ export default class Spaces extends View {
           wakeGroupSpaces = null;
         }
       });
+      // Read-only: a tiny manifest on GitHub, every six hours. The chip and the
+      // notification open kent-updater; this mod never writes installed files.
+      const checkUpdate = (cx) => cx.spawn(async (cx) => {
+        try { await checkKentUpdate(); } catch {}
+        cx.notify();
+      });
+      checkUpdate(cx);
+      cx.timer.every(6 * 3600 * 1000, checkUpdate);
     }
   }
 
@@ -3045,6 +3054,8 @@ export default class Spaces extends View {
     const ps = panes();
     const ms = machines();
     const store = readStore();
+    const update = shared("kent.update");
+    const showUpdate = update?.status === "available" && update.version !== shared("kent.dismissed-version");
     const tabPanes = panesByTab(ps);
     const waiting = agents().filter((a) => a.status === "blocked");
     this.needsYou = waiting.length;
@@ -3119,6 +3130,11 @@ export default class Spaces extends View {
             .child("!").child(String(this.needsYou))))
           .when(this.caption != null, (title) => title.child(this.machineTag(t)))))
         .child(h_flex().gap(2).items_center()
+          .when(!collapsed && showUpdate, (el) => el.child(div().id("kent-update").h(26).px(7).flex_none().flex().items_center().rounded(6)
+            .bg(t.accent).text_color(t.foreground).text_size(10.5).font_semibold().cursor_pointer().hover((s) => s.opacity(0.88))
+            .tooltip(`Kent ${update.version} is out${update.notes ? ` · ${update.notes}` : ""}. Click to update.`)
+            .on_click(() => run("mod.open", { name: "kent-updater" }))
+            .child(`↑ ${update.version}`)))
           .when(!collapsed, el => el.child(div().id("space-filter").size(26).flex_none().flex().items_center().justify_center().rounded(6)
             .when(this.filtering, (b) => b.bg(t.selected).text_color(t.foreground))
             .hover(s => s.bg(t.hover).text_color(t.foreground))
