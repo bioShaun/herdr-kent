@@ -46,8 +46,8 @@
     },
     {
       "path": "mods/kent/main.js",
-      "sha256": "f4ae8f7d09d8aa74b47fac1578656888e8cd6109de9cc9aba8f31f0d4584c3ec",
-      "size": 146306
+      "sha256": "c7445cd4c084bd69508b08cb2271db27719781ae966b79cddbf364267f2a9d01",
+      "size": 146746
     },
     {
       "path": "mods/kent/mod.json",

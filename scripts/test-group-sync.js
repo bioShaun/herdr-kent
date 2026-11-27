@@ -31,7 +31,7 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
     readProjects, projectEntries, rememberProject, forgetProject, projectKeyOf, normPath,
     agentMachine, agentsOnMachine, firstAgentOnMachine, parkedMachineNames,
     rememberTemporaryMachines, isTemporaryMachine, parseGroupDocEvent, eventsLookUnsupported,
-    waitGroupDocEvent,
+    waitGroupDocEvent, refreshGroupDocs,
   };`;
 
   const localStorage = {
@@ -671,6 +671,47 @@ function testParseGroupDocEvents() {
   assert.equal(kent.eventsLookUnsupported(1, 'machine unknown', ''), false);
 }
 
+async function testRefreshQueuedWhenEventArrivesDuringPoll() {
+  const core = fakeCore();
+  const doc = core.getDoc('4090');
+  doc.value = { groups: [], in: {}, defaultFolded: false, at: 1 };
+  doc.version = 1;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let hold = true;
+  const exec = async (cmd, args) => {
+    const result = await core.exec(cmd, args);
+    if (hold) {
+      hold = false;
+      await gate;
+    }
+    return result;
+  };
+  const { kent } = loadKent({
+    machineList: [{ name: '4090', layout: 'ready' }],
+    execImpl: exec,
+  });
+  const tasks = [];
+  const cx = {
+    spawn(fn) { const p = fn(cx); tasks.push(p); return p; },
+    notify() {},
+  };
+  kent.machineStore('4090');
+  kent.refreshGroupDocs(cx, { hiddenOk: true });
+  assert.equal(kent.groupSync.polling, true, 'poll is in flight');
+  // The document changes while the first doc.get waits; the event asks for a refresh.
+  doc.value = { groups: [{ id: 'g', name: 'Remote', folded: false }], in: { g: [] }, defaultFolded: false, at: 2 };
+  doc.version = 2;
+  kent.refreshGroupDocs(cx, { hiddenOk: true });
+  assert.equal(kent.groupSync.refreshPending, true, 'the event refresh is queued');
+  release();
+  while (tasks.length) await tasks.shift();
+  const st = kent.machineStore('4090');
+  assert.equal(st.version, 2, 'the queued refresh reads the newer document');
+  assert.equal(st.data.groups.length, 1);
+  assert.equal(kent.groupSync.refreshPending, false);
+}
+
 async function testWaitGroupDocEventStopsProducer() {
   if (process.platform === 'win32') return;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kent-hc-'));
@@ -726,6 +767,7 @@ async function testWaitGroupDocEventStopsProducer() {
   testAgentAndParkedMachines();
   testParseGroupDocEvents();
   await testWaitGroupDocEventStopsProducer();
+  await testRefreshQueuedWhenEventArrivesDuringPoll();
   await testFoldRenameDeleteIntents();
   await testUnavailableStaysQueued();
   console.log('group sync harness checks passed');

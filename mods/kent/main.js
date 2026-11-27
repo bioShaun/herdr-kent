@@ -493,6 +493,7 @@ const groupSync = {
   wake: null,
   notify: null,
   polling: false,
+  refreshPending: false, // an event or timer asked for a refresh while polling
   rpcWarned: false,
   eventsUnsupported: false, // old cores have no `hc events --doc`
   eventsLive: false,
@@ -1156,7 +1157,13 @@ function pollError(st, e) {
 }
 
 function refreshGroupDocs(cx, { hiddenOk = false } = {}) {
-  if (checking() || groupSync.polling || (!hiddenOk && window()?.visible === false)) return;
+  if (checking() || (!hiddenOk && window()?.visible === false)) return;
+  // A document event can land while a doc.get batch is in flight; the batch
+  // may have read the older value. Run one more refresh after it settles.
+  if (groupSync.polling) {
+    groupSync.refreshPending = true;
+    return;
+  }
   const now = Date.now();
   const layoutByMachine = new Map(machines().map((m) => [m.name ?? null, m.layout]));
   for (const st of groupSync.stores.values()) {
@@ -1209,6 +1216,9 @@ function refreshGroupDocs(cx, { hiddenOk = false } = {}) {
       }
     } finally {
       groupSync.polling = false;
+      const pending = groupSync.refreshPending;
+      groupSync.refreshPending = false;
+      if (pending) refreshGroupDocs(cx, { hiddenOk: true });
       cx.notify();
     }
   });
