@@ -1,8 +1,8 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "channel": "stable",
   "minHerdr": "0.1.18",
-  "notes": "Veil unfocused panes at 0.2; list agent-only machines, restore agent keys, subscribe to group docs.",
+  "notes": "Sync Parked folders with the machine document; legacy local drawers migrate once.",
   "files": [
     {
       "path": "layouts/kent.json",
@@ -46,8 +46,8 @@
     },
     {
       "path": "mods/kent/main.js",
-      "sha256": "c7445cd4c084bd69508b08cb2271db27719781ae966b79cddbf364267f2a9d01",
-      "size": 146746
+      "sha256": "2b9e562126da70bd960be729679b8910c969ba63ff4ef787e47110484c331e85",
+      "size": 151295
     },
     {
       "path": "mods/kent/mod.json",
