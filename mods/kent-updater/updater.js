@@ -16,15 +16,32 @@ const USER_AGENT = "Kent-Updater";
 const homePath = (path) => `${appHome().replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 const stamp = () => new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "") + "-" + Math.floor(Math.random() * 1000);
 
-async function getText(url) {
-  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT, "Accept": "application/vnd.github+json" } });
+const REQUEST_TIMEOUT_MS = 15000;
+
+// The mod shell's fetch rejects an AbortSignal option, so cancellation has to
+// come from the view's cx.timer. The underlying request may still finish; its
+// result is ignored once this race has failed.
+function withTimeout(promise, timeout) {
+  if (typeof timeout !== "function") return promise;
+  return Promise.race([
+    promise,
+    timeout(REQUEST_TIMEOUT_MS).then(() => {
+      throw new Error(`GitHub did not answer within ${REQUEST_TIMEOUT_MS / 1000}s. Check the network and try again.`);
+    }),
+  ]);
+}
+
+async function getText(url, timeout = null) {
+  const res = await withTimeout(fetch(url, {
+    headers: { "User-Agent": USER_AGENT, "Accept": "application/vnd.github+json" },
+  }), timeout);
   if (!res.ok) throw new Error(`HTTP ${res.status} while fetching ${url}`);
   return res.text();
 }
 
-async function readManifestAt(ref, cacheBust) {
+async function readManifestAt(ref, cacheBust, timeout = null) {
   const url = `https://raw.githubusercontent.com/${REPO}/${ref}/${MANIFEST}${cacheBust ? `?t=${Date.now()}` : ""}`;
-  const raw = await getText(url);
+  const raw = await getText(url, timeout);
   let manifest;
   try {
     manifest = JSON.parse(raw);
@@ -39,12 +56,12 @@ async function readManifestAt(ref, cacheBust) {
 // Read version.json at the commit named by the branch first: a raw main URL can
 // be a CDN-cached copy from before the release. Fall back to main with a
 // cache-buster only when the API is rate-limited or unreachable.
-export async function fetchRemoteManifest() {
+export async function fetchRemoteManifest(timeout = null) {
   let ref = REF;
   try {
-    const response = await fetch(`https://api.github.com/repos/${REPO}/commits/${REF}`, {
+    const response = await withTimeout(fetch(`https://api.github.com/repos/${REPO}/commits/${REF}`, {
       headers: { "User-Agent": USER_AGENT, "Accept": "application/vnd.github+json" },
-    });
+    }), timeout);
     if (response.ok) {
       const data = await response.json().catch(() => null);
       if (data?.sha) ref = String(data.sha);
@@ -54,12 +71,12 @@ export async function fetchRemoteManifest() {
   }
   if (ref !== REF) {
     try {
-      return await readManifestAt(ref, false);
+      return await readManifestAt(ref, false, timeout);
     } catch {
       // A vanished commit or a raw hiccup: the branch copy is still a valid release.
     }
   }
-  return readManifestAt(REF, true);
+  return readManifestAt(REF, true, timeout);
 }
 
 export async function readLocalManifest() {
@@ -80,11 +97,11 @@ function appVersion() {
   }
 }
 
-export async function checkForUpdate() {
+export async function checkForUpdate(timeout = null) {
   const local = await readLocalManifest();
   let remote;
   try {
-    remote = await fetchRemoteManifest();
+    remote = await fetchRemoteManifest(timeout);
   } catch (error) {
     const info = {
       status: "error",
@@ -206,11 +223,12 @@ async function writeManaged(path, content, old) {
   await writeTextFile(homePath(path), content, old ?? null);
 }
 
-export async function installUpdate(remote, log = () => {}) {
+export async function installUpdate(remote, log = () => {}, timeout = null) {
   const manifest = remote?.manifest;
   const problems = validateManifest(manifest);
   if (problems.length) throw new Error(`manifest.json is invalid:\n  ${problems.join("\n  ")}`);
   const local = await readLocalManifest();
+  log("Preparing the update...", { phase: "prepare", current: 0, total: 1 });
   const oldFiles = new Map();
 
   const union = new Set([
@@ -222,17 +240,19 @@ export async function installUpdate(remote, log = () => {}) {
     if (managedPath(path)) oldFiles.set(path, await readTextFile(homePath(path)).catch(() => null));
   }
 
-  log(`Downloading ${manifest.files.length} files from ${String(remote.ref).slice(0, 8)}...`);
+  const totalFiles = manifest.files.length;
+  log(`Downloading ${totalFiles} files from ${String(remote.ref).slice(0, 8)}...`, { phase: "download", current: 0, total: totalFiles });
   const nextFiles = new Map();
   for (const [index, entry] of manifest.files.entries()) {
-    log(`Downloading ${entry.path} (${index + 1}/${manifest.files.length})...`);
+    log(`Downloading ${entry.path} (${index + 1}/${totalFiles})...`, { phase: "download", current: index, total: totalFiles });
     const url = `https://raw.githubusercontent.com/${REPO}/${remote.ref}/${entry.path}?t=${Date.now()}`;
-    const content = canonicalText(await getText(url));
+    const content = canonicalText(await getText(url, timeout));
     if (sha256Hex(content) !== entry.sha256) throw new Error(`${entry.path}: SHA-256 does not match the manifest`);
     if (utf8Length(content) !== entry.size) throw new Error(`${entry.path}: size does not match the manifest`);
     nextFiles.set(entry.path, content);
+    log(`Downloaded ${entry.path}.`, { phase: "download", current: index + 1, total: totalFiles });
   }
-  log(`Verified ${nextFiles.size} files.`);
+  log(`Verified ${nextFiles.size} files.`, { phase: "verify", current: totalFiles, total: totalFiles });
 
   try {
     JSON.parse(nextFiles.get("layouts/kent.json"));
@@ -249,13 +269,15 @@ export async function installUpdate(remote, log = () => {}) {
       await fs.mkdir(target.slice(0, target.lastIndexOf("/")), { recursive: true });
       await fs.writeFile(target, content);
     }
+    log("Checking the staged mods...", { phase: "install", current: 0, total: 1 });
     await checkStagedMods(stageRoot, log);
-    log("Staged mods check passed.");
+    log("Staged mods check passed.", { phase: "install", current: 1, total: 1 });
   } finally {
     await removePath(stageRoot).catch(() => {});
   }
 
   const backupDir = homePath(`kent-backup-${stamp()}`);
+  log("Backing up the installed files...", { phase: "install", current: 1, total: 1 });
   for (const [path, old] of oldFiles) {
     if (old !== null && old !== undefined) await writeBackup(backupDir, path, old);
   }
@@ -264,6 +286,7 @@ export async function installUpdate(remote, log = () => {}) {
 
   const written = [];
   const removed = [];
+  log("Writing the new files...", { phase: "install", current: 1, total: 1 });
   try {
     for (const [path, content] of nextFiles) {
       if (!path.startsWith("mods/")) continue;
@@ -318,6 +341,6 @@ export async function installUpdate(remote, log = () => {}) {
     level: "success",
     timeout: 8000,
   });
-  log(`Updated to ${manifest.version}. Backup: ${backupDir}`);
+  log(`Updated to ${manifest.version}. Backup: ${backupDir}`, { phase: "done", current: 1, total: 1 });
   return { ok: true, version: manifest.version, backupDir, changed: written.length, removed: removed.length };
 }

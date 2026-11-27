@@ -164,8 +164,11 @@ async function testInstallSuccess() {
   const h = await harness({ manifestFiles: newFiles, oldFiles });
   try {
     const remote = await h.context.fetchRemoteManifest();
-    const result = await h.context.installUpdate(remote, () => {});
+    const progress = [];
+    const result = await h.context.installUpdate(remote, (_line, step) => { if (step) progress.push(step); });
     assert.strictEqual(result.version, "1.0.0");
+    assert.ok(progress.some((step) => step.phase === "download" && step.total === 4 && step.current === 4), "download progress reaches the end");
+    assert.strictEqual(progress.at(-1)?.phase, "done");
     for (const [relative, content] of Object.entries(newFiles)) {
       assert.strictEqual(await fs.readFile(path.join(h.home, relative), "utf8"), content);
     }
