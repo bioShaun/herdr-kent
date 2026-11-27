@@ -1,13 +1,13 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "channel": "stable",
   "minHerdr": "0.1.18",
-  "notes": "List machines that still have agents or Parked folders; group agents by machine; restore agent keyboard navigation; subscribe to kent.groups.v1 on herdr-core 0.1.22+.",
+  "notes": "Veil unfocused panes at 0.2; list agent-only machines, restore agent keys, subscribe to group docs.",
   "files": [
     {
       "path": "layouts/kent.json",
-      "sha256": "482e36055800efe843da30aa9d854144ca8cc626e58f123eee18ac5087dd41e5",
-      "size": 4240
+      "sha256": "b71929574620d4098af5168ad9b1c37c7dcf8810e40874aa17e341c33a22812f",
+      "size": 4271
     },
     {
       "path": "layouts/kent.svg",
