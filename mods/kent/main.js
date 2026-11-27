@@ -939,19 +939,34 @@ async function waitGroupDocEvent() {
     ].join("\n");
     r = await exec("powershell", ["-NoProfile", "-Command", command], { timeout: EVENTS_WAIT });
   } else {
+    // `sh` waits for every process in a pipeline, so letting awk exit after a
+    // matching line would keep `hc` alive until it next writes. Run the
+    // producer against a FIFO instead and stop it once awk has the line.
     const script = [
-      `errf=$(mktemp)`,
-      `trap 'rm -f "$errf"' EXIT`,
-      `out=$(hc events --doc ${JSON.stringify(doc)} --json 2>"$errf" | awk '`,
-      "BEGIN { first = 1 }",
-      "{",
-      "  if (first) { first = 0; next }",
-      "  if ($0 ~ /\"method\"[[:space:]]*:[[:space:]]*\"missed\"/) { print; exit 0 }",
-      "  if ($0 ~ /\"method\"[[:space:]]*:[[:space:]]*\"event\"/ && $0 ~ /\"type\"[[:space:]]*:[[:space:]]*\"doc\"/) { print; exit 0 }",
-      "}')",
-      `if [ -n "$out" ]; then printf %s "$out"; exit 0; fi`,
-      `if [ -s "$errf" ]; then cat "$errf" >&2; exit 1; fi`,
-      "exit 0",
+      `d=$(mktemp -d) || exit 1`,
+      `pid=`,
+      `cleanup() {`,
+      `  if [ -n "$pid" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fi`,
+      `  rm -rf "$d"`,
+      `}`,
+      `trap cleanup EXIT`,
+      `mkfifo "$d/events" || exit 1`,
+      `hc events --doc ${JSON.stringify(doc)} --json 2>"$d/err" >"$d/events" &`,
+      `pid=$!`,
+      `awk 'BEGIN { first = 1; hit = 0 }`,
+      `{`,
+      `  if (first) { first = 0; next }`,
+      `  if ($0 ~ /"method"[[:space:]]*:[[:space:]]*"missed"/) { print; hit = 1; exit }`,
+      `  if ($0 ~ /"method"[[:space:]]*:[[:space:]]*"event"/ && $0 ~ /"type"[[:space:]]*:[[:space:]]*"doc"/) { print; hit = 1; exit }`,
+      `}`,
+      `END { exit (hit ? 0 : 1) }' < "$d/events"`,
+      `hit=$?`,
+      `kill "$pid" 2>/dev/null`,
+      `wait "$pid" 2>/dev/null`,
+      `pid=`,
+      `if [ "$hit" -eq 0 ]; then exit 0; fi`,
+      `if [ -s "$d/err" ]; then cat "$d/err" >&2; exit 1; fi`,
+      `exit 0`,
     ].join("\n");
     r = await exec("sh", ["-c", script], { timeout: EVENTS_WAIT });
   }

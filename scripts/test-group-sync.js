@@ -31,6 +31,7 @@ function loadKent({ sharedData = {}, storage = {}, spacesList = [], machineList 
     readProjects, projectEntries, rememberProject, forgetProject, projectKeyOf, normPath,
     agentMachine, agentsOnMachine, firstAgentOnMachine, parkedMachineNames,
     rememberTemporaryMachines, isTemporaryMachine, parseGroupDocEvent, eventsLookUnsupported,
+    waitGroupDocEvent,
   };`;
 
   const localStorage = {
@@ -670,6 +671,37 @@ function testParseGroupDocEvents() {
   assert.equal(kent.eventsLookUnsupported(1, 'machine unknown', ''), false);
 }
 
+async function testWaitGroupDocEventStopsProducer() {
+  if (process.platform === 'win32') return;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kent-hc-'));
+  try {
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    const mock = path.join(bin, 'hc');
+    fs.writeFileSync(mock, [
+      '#!/bin/sh',
+      'if [ "$1" = "events" ]; then',
+      `  printf '%s\\n' '{"jsonrpc":"2.0","method":"snapshot","params":{"seq":0}}'`,
+      `  printf '%s\\n' '{"jsonrpc":"2.0","method":"event","params":{"type":"doc","data":{"name":"kent.groups.v1","version":7},"seq":1}}'`,
+      '  sleep 8',
+      `  printf '%s\\n' '{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":2}}'`,
+      'fi',
+      '',
+    ].join('\n'));
+    fs.chmodSync(mock, 0o755);
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const { kent } = loadKent({ execImpl: processExec(env) });
+    const started = Date.now();
+    const ev = await kent.waitGroupDocEvent();
+    const elapsed = Date.now() - started;
+    assert.equal(ev.type, 'doc');
+    assert.equal(ev.version, 7);
+    assert.ok(elapsed < 4000, `waiter returned after ${elapsed}ms; it must stop the producer once the line arrives`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 (async () => {
   await testCanonical();
   await testUnicodeRpc();
@@ -693,6 +725,7 @@ function testParseGroupDocEvents() {
   testFilterAndParkedStore();
   testAgentAndParkedMachines();
   testParseGroupDocEvents();
+  await testWaitGroupDocEventStopsProducer();
   await testFoldRenameDeleteIntents();
   await testUnavailableStaysQueued();
   console.log('group sync harness checks passed');
