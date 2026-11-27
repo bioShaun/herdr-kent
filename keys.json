@@ -1,7 +1,16 @@
 {
   "layout:kent": {
-    "alt-down": "kent.next",
-    "alt-up": "kent.prev",
+    "alt-down": "agent.next",
+    "alt-up": "agent.prev",
+    "alt-1": "agent.select:1",
+    "alt-2": "agent.select:2",
+    "alt-3": "agent.select:3",
+    "alt-4": "agent.select:4",
+    "alt-5": "agent.select:5",
+    "alt-6": "agent.select:6",
+    "alt-7": "agent.select:7",
+    "alt-8": "agent.select:8",
+    "alt-9": "agent.select:9",
     "ctrl-1": "kent.select1",
     "ctrl-2": "kent.select2",
     "ctrl-3": "kent.select3",

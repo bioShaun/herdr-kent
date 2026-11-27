@@ -15,7 +15,8 @@ Kent 是一个适合同时打开很多 spaces 的 Herdr layout。它保留 Herdr
 - `Spaces` 下方的搜索按钮（或命令面板的 **Filter spaces**）可以按 space 名称、机器、git 仓库、分支或文件夹过滤。组名命中时显示整组；计数显示 `命中/总数`；`↑`/`↓` 移动高亮，`Enter` 打开，`Esc` 清空并关闭。过滤只改变画出来的列表，不会改变 Herdr 的真实 space 顺序。
 - space 行使用带主题感知对比边缘的 program icon chip，并显示名称、git 仓库/分支信息和 agent 状态；内置 SVG icon 会按可见矢量边界适配，因此竖向或横向图形都能保持自己的方向，不再被拉成方形。名称显示不全时（以及窄栏编号模式下），悬停可以看到完整名称。
 - 名称优先：放得下就保持完整，让 git 尾巴让位；尾巴只剩几个字母时直接不显示。长名称从中间省略，保留更有辨识度的结尾。
-- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip 和名称 tooltip；space 名后面的细节在只剩残片时干脆不显示。子 agent 和分组的折叠状态会跨重启保留。
+- Agents 列表通过内置的 `kent-agents` mod 使用同一套 icon chip 和名称 tooltip；长名会从中间省略，同一台机器上读起来相同的条目会保留能区分的详情。可以按优先级、按 space 或按机器排序。子 agent 和分组的折叠状态会跨重启保留。点击一条 agent 时，Spaces 列表会把对应机器滚进视口。
+- 一台机器即使当前没有打开的 space，只要上面还有 agent，或 Parked 里还记着文件夹，就会出现在 Spaces 里。Herdr 的临时（`--temp`）沙箱机器仍然隐藏。没有打开的 space 时，列表会写明这台上还有几个 agent：点它可以打开其中一个，或用机头上的 `+` 新建 space。
 - 某台机器的标题滚出列表后，它的名字会留在 `Spaces` 旁边，滚回去即消失；点一下可以回到该机器的标题。
 - 两个列表的滚动条只在鼠标停留或滚动时出现。
 - 可以直接在分组里新建 space，也可以通过右键菜单放入分组，或直接拖到分组标题上。从顶部按钮或分组 `+` 新建时，如果当前 space 就在同一组，新 space 会落在它下面，而不是组尾。
@@ -87,8 +88,17 @@ Herdr 把共享 layout 当成普通文件复制，不会自动更新，所以 Ke
 ```json
 {
   "layout:kent": {
-    "alt-down": "kent.next",
-    "alt-up": "kent.prev",
+    "alt-down": "agent.next",
+    "alt-up": "agent.prev",
+    "alt-1": "agent.select:1",
+    "alt-2": "agent.select:2",
+    "alt-3": "agent.select:3",
+    "alt-4": "agent.select:4",
+    "alt-5": "agent.select:5",
+    "alt-6": "agent.select:6",
+    "alt-7": "agent.select:7",
+    "alt-8": "agent.select:8",
+    "alt-9": "agent.select:9",
     "ctrl-1": "kent.select1",
     "ctrl-2": "kent.select2",
     "ctrl-3": "kent.select3",
@@ -104,7 +114,7 @@ Herdr 把共享 layout 当成普通文件复制，不会自动更新，所以 Ke
 }
 ```
 
-第一组快捷键按照 Kent 实际显示的顺序切换 spaces，并跳过折叠分组里隐藏的行。`ctrl-1` … `ctrl-9` 选中侧栏里第 N 行，也就是窄栏编号打印的那个数字。Herdr 自带的 `ctrl-N` 按它内部的 space 顺序选择，一旦分组和 worktree 嵌套打乱了行序，两者就会对不上；Kent 显示期间 `layout:kent` 的优先级高于 `global`。之前合并过旧版 `layout:kent` 的话，把这九行 `ctrl-N` 补进去即可。
+`alt-up` / `alt-down` 继续使用 Herdr 的上一个/下一个 agent；`alt-1` … `alt-9` 使用 Herdr 0.1.18 的 `agent.select`，跳到 Kent 当前 Agents 列表里的第 N 个。切换 space 用 `ctrl-shift-pageup` / `ctrl-shift-pagedown`（`kent.prev` / `kent.next`），按 Kent 画出来的顺序走，会跳过折叠分组里隐藏的行，过滤开启时也跟着过滤后的列表。`ctrl-1` … `ctrl-9` 选中侧栏里第 N 个 space 行，也就是窄栏编号打印的那个数字，不会用来选 agent。Herdr 自带的 `ctrl-N` 按它内部的 space 顺序选择，一旦分组和 worktree 嵌套打乱了行序，两者就会对不上；Kent 显示期间 `layout:kent` 的优先级高于 `global`。之前合并过旧版 `layout:kent` 的话，把 `alt-up` / `alt-down` 改回 `agent.prev` / `agent.next`，补上 `alt-N`，并保留那九行 `ctrl-N` space 绑定。
 
 ## 使用分组
 
@@ -118,7 +128,7 @@ Herdr 把共享 layout 当成普通文件复制，不会自动更新，所以 Ke
 - 拖动已分组 space 时，列表底部会出现 `Move to default`，拖到这里可以移出命名分组。
 - 单击分组标题可以折叠或展开；使用标题上的 `+` 可以在该分组里新建 space。如果当前 space 已经在同一组，新行会落在它下面。
 - 右键命名分组标题可以在组内新建 space、重命名、上下移动、折叠/展开或删除分组。删除分组不会关闭其中的 spaces。
-- 用搜索按钮、命令面板的 **Filter spaces** 或 `kent.filter` 命令打开过滤。`↑`/`↓` 移动高亮，`Enter` 打开高亮 space，`Esc` 清空并关闭。数字键和 `alt-up`/`alt-down` 也跟着过滤后的列表走。
+- 用搜索按钮、命令面板的 **Filter spaces** 或 `kent.filter` 命令打开过滤。`↑`/`↓` 移动高亮，`Enter` 打开高亮 space，`Esc` 清空并关闭。数字键和 `ctrl-shift-pageup` / `ctrl-shift-pagedown` 也跟着过滤后的 space 列表走。
 - 关闭 space 后，它会进入所属机器的 **Parked** 区域。点一行会用原文件夹在原来的分组（分组已删除则 `default`）重新打开；点行尾 `×` 可以忘掉。Parked 只保存在当前客户端。
 
 对于 git checkout，space 菜单还会显示 Herdr 的 worktree 操作：`New worktree`、`Open worktree`；linked worktree 还会显示 `Remove worktree`。
@@ -132,7 +142,7 @@ Kent 不再写死亮色或暗色主题。它会跟随 `settings.json`、系统�
 - 分组是手动维护的；Kent 不会根据路径、名称前缀或 tag 自动分组。
 - 分组不能跨机器。两台机器上同名分组是相互独立的。
 - 分组状态按机器保存在那台机器的 herdr-core document `kent.groups.v1` 里。连接到同一台机器的不同客户端会看到相同的分组、成员、顺序和折叠状态；即使各客户端给这台机器起了不同别名也没问题，因为成员关系保存的是机器本地 space id。
-- 窗口里的修改会先即时显示，再异步写入 core document；写入使用版本号 CAS。发生并发冲突时会重新读取最新文档并把本次操作意图重新应用上去，而不是直接覆盖另一个客户端的修改。窗口可见时 Kent 大约每 3 秒轮询一次，因此其他客户端的修改可能需要几秒才会出现。
+- 窗口里的修改会先即时显示，再异步写入 core document；写入使用版本号 CAS。发生并发冲突时会重新读取最新文档并把本次操作意图重新应用上去，而不是直接覆盖另一个客户端的修改。在 herdr-core 0.1.22 及更新版本上，Kent 会用 `hc events --doc` 订阅 `kent.groups.v1`，文档变化时再刷新；几秒一次的轮询只作为兜底，较旧 core 则仍然只走轮询。走轮询时，其他客户端的修改可能需要几秒才会出现。
 - 如果机器离线，或它的 core 太旧、不支持 document 存储，Kent 会退回到原来的客户端本地行为，并把修改保存在本地队列里。队列会跨 app 重启保留，并在机器/core 可用后重试；在同步成功前，这些修改对其他客户端不可见。
 - 旧的客户端本地分组会在首次连接时迁移到对应机器的 document。由于旧数据没有跨客户端稳定身份，同名旧分组会被合并；machine document 中已有的成员关系优先。如果多台客户端以前的分组已经分叉，第一次同步迁移后建议检查重要分组。
 - Parked 是客户端本地的抽屉（`kent.projects.v1`，每台机器最多 50 条），只记文件夹、显示名和原分组，不保存 tabs、scrollback 或原进程；它不同步，所以另一台客户端有自己的抽屉。重新打开文件夹会新建 space，而不是恢复旧会话。

@@ -121,6 +121,9 @@ const PENDING_KEY = "kent.groups.pending.v1";
 const VERSIONS_KEY = "kent.groups.sync.versions";
 const PROJECTS_KEY = "kent.projects.v1";
 const PARKED_FOLDED_KEY = "kent.parked.folded";
+const REVEAL_MACHINE_KEY = "kent.reveal-machine";
+const EVENTS_WAIT = 600000;
+const SYNC_SAFETY = 60000;
 const PROJECT_CAP = 50;
 const DEFAULT_GROUP = "__default__";
 const groupId = () => `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -210,6 +213,44 @@ function forgetProject(machine, folder) {
   return true;
 }
 
+// Machines added with `hc machine add --temp` stay out of `machines()` and
+// the Spaces list, matching Herdr's shipped spaces mod and AGENTS.md.
+let knownTemporaryMachines = new Set();
+
+function rememberTemporaryMachines(list) {
+  knownTemporaryMachines = new Set(
+    (Array.isArray(list) ? list : []).filter((m) => m?.temporary && m.name).map((m) => m.name),
+  );
+}
+
+function isTemporaryMachine(name) {
+  return Boolean(name) && knownTemporaryMachines.has(name);
+}
+
+// An agent on another machine is addressed `vps/t7`; this computer has no prefix.
+function agentMachine(address) {
+  if (typeof address !== "string") return null;
+  const at = address.indexOf("/");
+  return at > 0 ? address.slice(0, at) : null;
+}
+
+function agentsOnMachine(machine, all = agents()) {
+  machine = machine ?? null;
+  return all.filter((a) => (agentMachine(a.address) ?? null) === machine);
+}
+
+function firstAgentOnMachine(machine, all = agents()) {
+  const rank = { blocked: 4, done: 3, working: 2, idle: 1 };
+  let best = null;
+  for (const a of agentsOnMachine(machine, all)) {
+    if (!best || (rank[a.status] ?? 0) > (rank[best.status] ?? 0)) best = a;
+  }
+  return best;
+}
+
+function parkedMachineNames() {
+  return Object.keys(readProjects()).filter((key) => key && !isTemporaryMachine(key));
+}
 
 function beginSpaceCreation(machine) {
   machine = machine ?? null;
@@ -229,6 +270,7 @@ const startedAt = Date.now();
 const STARTUP_GRACE = 10000;
 const PRUNE_EVERY = 60000;
 const SYNC_EVERY = 3000;
+// While a document subscription is live, poll this often only as a safety net.
 // A sync worker belongs to the mod copy whose cx started it and dies with
 // that copy. The heartbeat lets a surviving copy adopt the shared worker.
 const SYNC_STALE = 9000;
@@ -451,7 +493,11 @@ const groupSync = {
   wake: null,
   notify: null,
   polling: false,
+  refreshPending: false, // an event or timer asked for a refresh while polling
   rpcWarned: false,
+  eventsUnsupported: false, // old cores have no `hc events --doc`
+  eventsLive: false,
+  safetyPollAfter: 0,
 };
 
 function wakeGroupSync() {
@@ -509,6 +555,7 @@ function syncMachineNames() {
   const seen = new Set();
   const add = (machine) => {
     machine = machine ?? null;
+    if (machine && isTemporaryMachine(machine)) return;
     if (seen.has(machine)) return;
     seen.add(machine);
     out.push(machine);
@@ -518,6 +565,9 @@ function syncMachineNames() {
   for (const m of machines()) add(m.name ?? null);
   for (const s of spaces()) add(s.machine ?? null);
   for (const machine of groupSync.stores.keys()) add(machine);
+  // Agents and Parked can name a machine that currently has no open space.
+  for (const a of agents()) add(agentMachine(a.address));
+  for (const name of parkedMachineNames()) add(name);
   return out;
 }
 
@@ -829,6 +879,109 @@ async function docSet(machine, value, version) {
   return unwrapRpc(response);
 }
 
+// `hc events --json` prints the subscribe snapshot first, then one JSON-RPC
+// notification per line (`event`, `heartbeat`, or `missed`). See herdr-core
+// 0.1.22 schema/README.md and `hc events --doc`.
+function parseGroupDocEvent(line) {
+  if (typeof line !== "string" || !line.trim()) return null;
+  let msg;
+  try { msg = JSON.parse(line); } catch { return null; }
+  if (!msg || typeof msg !== "object") return null;
+  if (msg.method === "missed") return { type: "missed", seq: msg.params?.seq };
+  const params = msg.method === "event" ? msg.params : (msg.type ? msg : null);
+  if (!params || typeof params !== "object") return null;
+  if (params.type === "doc") {
+    return {
+      type: "doc",
+      name: params.data?.name ?? null,
+      version: params.data?.version,
+      machine: Object.prototype.hasOwnProperty.call(params, "machine") ? (params.machine ?? null) : null,
+      seq: params.seq,
+    };
+  }
+  if (params.type === "missed") return { type: "missed", seq: params.seq };
+  return null;
+}
+
+function eventsLookUnsupported(code, stderr, stdout) {
+  if (code === 0) return false;
+  const text = `${stderr ?? ""}\n${stdout ?? ""}`;
+  return /unexpected argument|unrecognized|unknown argument|unknown flag/i.test(text);
+}
+
+async function waitGroupDocEvent() {
+  if (groupSync.eventsUnsupported) return { type: "unsupported" };
+  const doc = GROUP_DOC;
+  const isWin = window()?.platform === "windows";
+  let r;
+  if (isWin) {
+    const command = [
+      "$psi = New-Object System.Diagnostics.ProcessStartInfo",
+      "$psi.FileName = 'hc'",
+      `$psi.Arguments = 'events --doc ${doc} --json'`,
+      "$psi.RedirectStandardOutput = $true",
+      "$psi.RedirectStandardError = $true",
+      "$psi.UseShellExecute = $false",
+      "$psi.CreateNoWindow = $true",
+      "$p = [Diagnostics.Process]::Start($psi)",
+      "$first = $true",
+      "while (($line = $p.StandardOutput.ReadLine()) -ne $null) {",
+      "  if ($first) { $first = $false; continue }",
+      "  if ($line -match '\"method\"\\s*:\\s*\"missed\"' -or ($line -match '\"method\"\\s*:\\s*\"event\"' -and $line -match '\"type\"\\s*:\\s*\"doc\"')) {",
+      "    Write-Output $line",
+      "    try { $p.Kill() } catch {}",
+      "    exit 0",
+      "  }",
+      "}",
+      "$err = $p.StandardError.ReadToEnd()",
+      "$p.WaitForExit()",
+      "if ($p.ExitCode -ne 0) { [Console]::Error.Write($err); exit $p.ExitCode }",
+      "exit 0",
+    ].join("\n");
+    r = await exec("powershell", ["-NoProfile", "-Command", command], { timeout: EVENTS_WAIT });
+  } else {
+    // `sh` waits for every process in a pipeline, so letting awk exit after a
+    // matching line would keep `hc` alive until it next writes. Run the
+    // producer against a FIFO instead and stop it once awk has the line.
+    const script = [
+      `d=$(mktemp -d) || exit 1`,
+      `pid=`,
+      `cleanup() {`,
+      `  if [ -n "$pid" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fi`,
+      `  rm -rf "$d"`,
+      `}`,
+      `trap cleanup EXIT`,
+      `mkfifo "$d/events" || exit 1`,
+      `hc events --doc ${JSON.stringify(doc)} --json 2>"$d/err" >"$d/events" &`,
+      `pid=$!`,
+      `awk 'BEGIN { first = 1; hit = 0 }`,
+      `{`,
+      `  if (first) { first = 0; next }`,
+      `  if ($0 ~ /"method"[[:space:]]*:[[:space:]]*"missed"/) { print; hit = 1; exit }`,
+      `  if ($0 ~ /"method"[[:space:]]*:[[:space:]]*"event"/ && $0 ~ /"type"[[:space:]]*:[[:space:]]*"doc"/) { print; hit = 1; exit }`,
+      `}`,
+      `END { exit (hit ? 0 : 1) }' < "$d/events"`,
+      `hit=$?`,
+      `kill "$pid" 2>/dev/null`,
+      `wait "$pid" 2>/dev/null`,
+      `pid=`,
+      `if [ "$hit" -eq 0 ]; then exit 0; fi`,
+      `if [ -s "$d/err" ]; then cat "$d/err" >&2; exit 1; fi`,
+      `exit 0`,
+    ].join("\n");
+    r = await exec("sh", ["-c", script], { timeout: EVENTS_WAIT });
+  }
+  if (eventsLookUnsupported(r.code, r.stderr, r.stdout)) return { type: "unsupported" };
+  if (r.code !== 0) throw new Error(r.stderr || r.stdout || `hc events exited ${r.code}`);
+  const lines = String(r.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const ev = parseGroupDocEvent(lines[i]);
+    if (ev) return ev;
+  }
+  return { type: "idle" };
+}
+
+
 function isConflict(e) {
   return e.kind === "conflict" || /conflict|version/i.test(e.message ?? "");
 }
@@ -1003,8 +1156,14 @@ function pollError(st, e) {
   st.refreshAfter = Date.now() + (slow ? SYNC_UNSUPPORTED_RETRY : SYNC_RETRY);
 }
 
-function refreshGroupDocs(cx) {
-  if (checking() || groupSync.polling || window()?.visible === false) return;
+function refreshGroupDocs(cx, { hiddenOk = false } = {}) {
+  if (checking() || (!hiddenOk && window()?.visible === false)) return;
+  // A document event can land while a doc.get batch is in flight; the batch
+  // may have read the older value. Run one more refresh after it settles.
+  if (groupSync.polling) {
+    groupSync.refreshPending = true;
+    return;
+  }
   const now = Date.now();
   const layoutByMachine = new Map(machines().map((m) => [m.name ?? null, m.layout]));
   for (const st of groupSync.stores.values()) {
@@ -1057,6 +1216,9 @@ function refreshGroupDocs(cx) {
       }
     } finally {
       groupSync.polling = false;
+      const pending = groupSync.refreshPending;
+      groupSync.refreshPending = false;
+      if (pending) refreshGroupDocs(cx, { hiddenOk: true });
       cx.notify();
     }
   });
@@ -1075,12 +1237,44 @@ function startGroupSync(cx) {
     if (groupSync.generation === generation) cx.notify();
   };
   cx.spawn(async (cx) => groupMutationWorker(cx, generation));
+  startGroupDocEvents(cx, generation);
   cx.timer.every(SYNC_EVERY, (cx) => {
     if (groupSync.generation !== generation) return;
     groupSync.heartbeat = Date.now();
+    // A live document subscription is the primary path; the timer is a fallback
+    // (or a safety net while subscribed).
+    if (groupSync.eventsLive && !groupSync.eventsUnsupported && Date.now() < (groupSync.safetyPollAfter ?? 0)) return;
     refreshGroupDocs(cx);
   });
   refreshGroupDocs(cx);
+}
+
+function startGroupDocEvents(cx, generation) {
+  if (checking() || groupSync.eventsUnsupported) return;
+  cx.spawn(async (cx) => {
+    while (groupSync.generation === generation) {
+      try {
+        const ev = await waitGroupDocEvent();
+        if (groupSync.generation !== generation) return;
+        if (ev?.type === "unsupported") {
+          groupSync.eventsUnsupported = true;
+          groupSync.eventsLive = false;
+          return;
+        }
+        groupSync.eventsLive = true;
+        groupSync.safetyPollAfter = Date.now() + SYNC_SAFETY;
+        if (ev?.type === "idle") continue;
+        // Snapshots do not include documents; a missed or reconnect requires a
+        // refetch of every watched machine. A named doc event can be narrower,
+        // but a full refresh is still correct and cheap.
+        refreshGroupDocs(cx, { hiddenOk: true });
+      } catch {
+        if (groupSync.generation !== generation) return;
+        groupSync.eventsLive = false;
+        await cx.sleep(2000);
+      }
+    }
+  });
 }
 
 function stopGroupSync() {
@@ -1088,6 +1282,7 @@ function stopGroupSync() {
   groupSync.started = false;
   groupSync.generation += 1;
   groupSync.notify = null;
+  groupSync.eventsLive = false;
   wakeGroupSync();
 }
 
@@ -1611,7 +1806,14 @@ export default class Spaces extends View {
 
   refreshMachines(cx) {
     cx.spawn(async cx => {
-      try { const r = await hc(["machine", "ls", "--json"]); if (r.code === 0) this.machines = (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary); } catch {}
+      try {
+        const r = await hc(["machine", "ls", "--json"]);
+        if (r.code === 0) {
+          const list = JSON.parse(r.stdout).machines ?? [];
+          rememberTemporaryMachines(list);
+          this.machines = list.filter((m) => !m.temporary);
+        }
+      } catch {}
       cx.notify();
     });
   }
@@ -2478,6 +2680,35 @@ export default class Spaces extends View {
       .child(svg(`mods/workspace-chrome/chevron-${g.folded ? "right" : "down"}.svg`).size(10).flex_none().text_color(t.dim));
   }
 
+  agentsHereRow(machine, living, t, collapsed) {
+    const n = living.length;
+    const label = n === 1 ? "1 agent here" : `${n} agents here`;
+    const first = firstAgentOnMachine(machine, living);
+    const open = () => {
+      if (!first) return;
+      setShared(REVEAL_MACHINE_KEY, { machine: machine ?? null, at: Date.now() });
+      run("agent.focus", { terminal: first.address });
+    };
+    return h_flex()
+      .id(`machine-agents-${machine ?? "local"}`)
+      .h(28)
+      .flex_none()
+      .px(collapsed ? 0 : 8)
+      .gap(7)
+      .items_center()
+      .rounded(7)
+      .text_size(12)
+      .text_color(t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .cursor_pointer()
+      .tooltip(first ? `Open ${first.space_name || first.address} on ${machine ?? "this computer"}` : label)
+      .on_click((_e, cx) => { cx.stop_propagation(); open(); })
+      .when(collapsed, (el) => el.w(RAIL_CELL).rounded(6).justify_center().child(String(n)))
+      .when(!collapsed, (el) => el
+        .child(svg("mods/workspace-chrome/layers.svg").size(12).flex_none())
+        .child(div().flex_1().min_w(0).truncate().child(label)));
+  }
+
   parkedFor(machine, sp, ps) {
     const entries = projectEntries(machine);
     if (!entries.length) return [];
@@ -2634,9 +2865,12 @@ export default class Spaces extends View {
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
+    this.machineHeadAt = new Map();
     let before = 0; // children above this machine's
     let base = 0; // visible rows above this machine's
-    const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
+    // Same machine set as group sync, plus any machine mid-reconnect. Temporary
+    // sandboxes are never added: syncMachineNames already skips them.
+    const remote = [...new Set([...syncMachineNames().filter(Boolean), ...Object.keys(this.reconnecting).filter((name) => !isTemporaryMachine(name))])].sort();
     const loading = m => {
       const layout = ms.find(k => k.name === m)?.layout;
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
@@ -2644,6 +2878,7 @@ export default class Spaces extends View {
     };
     const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     if (!remote.length) {
+      this.machineHeadAt.set("", 0);
       if (loading(null) && !rows.length) return [[loadingRow(null), { machine: null, h: 28 }]];
       const parked = this.parkedFor(null, sp, ps);
       const packed = this.machineRows(null, rows, draw, t, collapsed, store, 0, parked);
@@ -2704,6 +2939,7 @@ export default class Spaces extends View {
             .child(svg("mods/workspace-chrome/plus.svg").size(10))))
         .when(!collapsed, el => el.child(svg("mods/workspace-chrome/plus.svg").size(12)).child("New space there"));
       if (!collapsed && rebuilt) {
+        this.machineHeadAt.set(m ?? "", before);
         before += 1;
         out.push([head, { machineHead: true, machine: m, h: 26 + (machineIndex > 0 ? 6 : 0) }]);
         continue;
@@ -2719,10 +2955,14 @@ export default class Spaces extends View {
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
       const packed = folded ? null : this.machineRows(m, mine, draw, t, collapsed, store, base, this.parkedFor(m, sp, ps));
       // A login note is two lines: its height here is an estimate.
+      const living = agentsOnMachine(m);
       const content = !packed ? []
         : packed.items.length ? packed.items.map((el, n) => [el, packed.meta[n]])
-        : [[loading(m) ? loadingRow(m) : cell(empty), { machine: m, h: 28 }]];
+        : loading(m) ? [[loadingRow(m), { machine: m, h: 28 }]]
+        : living.length ? [[cell(this.agentsHereRow(m, living, t, collapsed)), { machine: m, h: 28, agentsHere: true }]]
+        : [[cell(empty), { machine: m, h: 28 }]];
       const items = [[cell(head), { machineHead: true, machine: m, h: 26 + (collapsed ? 4 : machineIndex > 0 ? 6 : 0) }], ...guidance.map((el) => [el, { machine: m, h: 46 }]), ...content];
+      this.machineHeadAt.set(m ?? "", before);
       if (packed) {
         this.seen.push(...packed.visible);
         base += packed.visible.length;
@@ -3060,7 +3300,20 @@ export default class Spaces extends View {
     const waiting = agents().filter((a) => a.status === "blocked");
     this.needsYou = waiting.length;
     this.firstBlockedSpace = waiting[0]?.space ?? null;
+    const reveal = shared(REVEAL_MACHINE_KEY);
+    if (reveal && reveal.at && reveal.at !== this.revealedMachineAt) {
+      const key = reveal.machine ?? "";
+      if (key && this.folded.has(key)) {
+        this.folded.delete(key);
+        localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
+      }
+    }
     const flat = this.grouped(t, collapsed, sp, ps, ms, store, tabPanes);
+    if (reveal && reveal.at && reveal.at !== this.revealedMachineAt) {
+      this.revealedMachineAt = reveal.at;
+      const at = this.machineHeadAt?.get(reveal.machine ?? "");
+      if (at !== undefined) this.scroll.scroll_to_item(at);
+    }
     this.filterPickId = this.filterActive() ? this.seen[this.filterAt] ?? null : null;
     const list = flat.map(([el]) => el);
     this.listItems = flat.map(([, m]) => m);
