@@ -166,9 +166,10 @@ async function stopStagedCore(stageRoot, session) {
 
 async function checkStagedMods(stageRoot, log) {
   const session = `kent-update-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+  const mods = ["kent", "kent-agents"];
   try {
-    for (const mod of ["kent", "kent-agents"]) {
-      log(`Checking staged mods/${mod}...`);
+    for (const [index, mod] of mods.entries()) {
+      log(`Checking staged mods/${mod}...`, { phase: "stage", current: index, total: mods.length });
       const result = await runHerdrCheck(`${stageRoot}/mods/${mod}`, stageRoot, session).catch((error) => {
         throw new Error(`could not run herdr-app check: ${error?.message ?? error}`);
       });
@@ -176,6 +177,7 @@ async function checkStagedMods(stageRoot, log) {
         const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
         throw new Error(`staged mods/${mod} failed herdr-app check${output ? `:\n${output}` : ""}`);
       }
+      log(`Staged mods/${mod} passed.`, { phase: "stage", current: index + 1, total: mods.length });
     }
   } finally {
     await stopStagedCore(stageRoot, session);
@@ -241,17 +243,34 @@ export async function installUpdate(remote, log = () => {}, timeout = null) {
   }
 
   const totalFiles = manifest.files.length;
-  log(`Downloading ${totalFiles} files from ${String(remote.ref).slice(0, 8)}...`, { phase: "download", current: 0, total: totalFiles });
+  // Progress is weighted by bytes, not files: main.js is a hundred times the
+  // size of mod.json, so file counting would sprint through the small files
+  // and then look stuck on the big one.
+  const totalBytes = manifest.files.reduce((sum, entry) => sum + entry.size, 0) || 1;
+  let bytesDone = 0;
+  let filesDone = 0;
+  log(`Downloading ${totalFiles} files from ${String(remote.ref).slice(0, 8)}...`, { phase: "download", current: 0, total: totalBytes, file: 0, files: totalFiles });
   const nextFiles = new Map();
-  for (const [index, entry] of manifest.files.entries()) {
-    log(`Downloading ${entry.path} (${index + 1}/${totalFiles})...`, { phase: "download", current: index, total: totalFiles });
+  // A small worker pool: one file at a time makes the download most of the
+  // install, while eleven parallel requests would be rude to raw.githubusercontent.
+  const downloadOne = async (entry) => {
     const url = `https://raw.githubusercontent.com/${REPO}/${remote.ref}/${entry.path}?t=${Date.now()}`;
     const content = canonicalText(await getText(url, timeout));
     if (sha256Hex(content) !== entry.sha256) throw new Error(`${entry.path}: SHA-256 does not match the manifest`);
     if (utf8Length(content) !== entry.size) throw new Error(`${entry.path}: size does not match the manifest`);
     nextFiles.set(entry.path, content);
-    log(`Downloaded ${entry.path}.`, { phase: "download", current: index + 1, total: totalFiles });
-  }
+    bytesDone += entry.size;
+    filesDone += 1;
+    log(`Downloaded ${entry.path} (${filesDone}/${totalFiles}).`, { phase: "download", current: bytesDone, total: totalBytes, file: filesDone, files: totalFiles });
+  };
+  const queue = [...manifest.files];
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (queue.length) {
+      const entry = queue.shift();
+      if (!entry) break;
+      await downloadOne(entry);
+    }
+  }));
   log(`Verified ${nextFiles.size} files.`, { phase: "verify", current: totalFiles, total: totalFiles });
 
   try {
@@ -269,24 +288,24 @@ export async function installUpdate(remote, log = () => {}, timeout = null) {
       await fs.mkdir(target.slice(0, target.lastIndexOf("/")), { recursive: true });
       await fs.writeFile(target, content);
     }
-    log("Checking the staged mods...", { phase: "install", current: 0, total: 1 });
+    log("Checking the staged mods...", { phase: "stage", current: 0, total: 2 });
     await checkStagedMods(stageRoot, log);
-    log("Staged mods check passed.", { phase: "install", current: 1, total: 1 });
+    log("Staged mods check passed.", { phase: "stage", current: 2, total: 2 });
   } finally {
     await removePath(stageRoot).catch(() => {});
   }
 
   const backupDir = homePath(`kent-backup-${stamp()}`);
-  log("Backing up the installed files...", { phase: "install", current: 1, total: 1 });
+  log("Backing up the installed files...", { phase: "write", current: 0, total: 2 });
   for (const [path, old] of oldFiles) {
     if (old !== null && old !== undefined) await writeBackup(backupDir, path, old);
   }
   if (local.raw !== null && local.raw !== undefined) await writeBackup(backupDir, LOCAL_MANIFEST, local.raw);
-  log(`Backed up the installed files to ${backupDir}.`);
+  log(`Backed up the installed files to ${backupDir}.`, { phase: "write", current: 1, total: 2 });
 
   const written = [];
   const removed = [];
-  log("Writing the new files...", { phase: "install", current: 1, total: 1 });
+  log("Writing the new files...", { phase: "write", current: 1, total: 2 });
   try {
     for (const [path, content] of nextFiles) {
       if (!path.startsWith("mods/")) continue;

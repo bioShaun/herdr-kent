@@ -167,7 +167,13 @@ async function testInstallSuccess() {
     const progress = [];
     const result = await h.context.installUpdate(remote, (_line, step) => { if (step) progress.push(step); });
     assert.strictEqual(result.version, "1.0.0");
-    assert.ok(progress.some((step) => step.phase === "download" && step.total === 4 && step.current === 4), "download progress reaches the end");
+    const totalBytes = Object.values(newFiles).reduce((sum, content) => sum + h.core.utf8Length(content), 0);
+    const lastDownload = progress.filter((step) => step.phase === "download").at(-1);
+    assert.strictEqual(lastDownload?.current, totalBytes, "download progress is byte-weighted and reaches the end");
+    assert.strictEqual(lastDownload?.total, totalBytes);
+    assert.strictEqual(lastDownload?.file, 4, "the file count is still reported for the label");
+    assert.strictEqual(lastDownload?.files, 4);
+    assert.ok(progress.some((step) => step.phase === "stage" && step.current === step.total), "staged check progress reaches the end");
     assert.strictEqual(progress.at(-1)?.phase, "done");
     for (const [relative, content] of Object.entries(newFiles)) {
       assert.strictEqual(await fs.readFile(path.join(h.home, relative), "utf8"), content);
